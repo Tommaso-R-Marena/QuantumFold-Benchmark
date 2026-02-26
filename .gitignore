@@ -1,0 +1,10 @@
+__pycache__/
+*.py[cod]
+*$py.class
+data/cache/
+results/
+tests/cache/
+.pytest_cache/
+*.png
+*.csv
+report.md

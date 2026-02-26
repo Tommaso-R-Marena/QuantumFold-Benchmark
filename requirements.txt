@@ -1,0 +1,13 @@
+numpy
+pandas
+biopython
+requests
+tqdm
+scipy
+pytest
+matplotlib
+seaborn
+biotite
+qiskit
+qiskit-aer
+tabulate
