@@ -1,6 +1,6 @@
 # QuantumFold-Benchmark
 
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/your-repo/QuantumFold-Benchmark/blob/main/notebooks/QuantumFold_Benchmarking.ipynb)
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Tommaso-R-Marena/QuantumFold-Benchmark/blob/main/notebooks/QuantumFold_Benchmarking.ipynb)
 
 Production-ready benchmarking suite for **QuantumFold-Advantage**: Rigorous comparison of hybrid quantum-classical protein folding against **AlphaFold3**, **Boltz2**, and other classical baselines.
 
