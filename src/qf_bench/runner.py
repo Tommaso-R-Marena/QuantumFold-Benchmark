@@ -9,6 +9,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from .models.base import FoldingModel
 from .data.loader import BenchmarkDataLoader
 from .metrics.scoring import calculate_metrics
+from .metrics.statistics import compare_models
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +19,7 @@ class BenchmarkRunner:
         self.data_loader = data_loader
         self.output_dir = output_dir
         os.makedirs(output_dir, exist_ok=True)
+        self.last_statistical_report = pd.DataFrame()
 
     def run_benchmark(self, dataset_name: str, targets: List[Dict], max_workers: int = 4) -> pd.DataFrame:
         """
@@ -83,6 +85,16 @@ class BenchmarkRunner:
         # Display summary in console
         summary = df.groupby("model")[["rmsd", "tm_score", "plddt"]].mean().reset_index()
         logger.info(f"\nSummary for {dataset_name}:\n{tabulate(summary, headers='keys', tablefmt='pretty', showindex=False)}")
+
+        baseline = self.models[0].name if self.models else None
+        if baseline and len(df["model"].unique()) > 1:
+            self.last_statistical_report = compare_models(df, baseline_model=baseline)
+            if not self.last_statistical_report.empty:
+                logger.info(
+                    "\nPaired statistical comparison vs %s:\n%s",
+                    baseline,
+                    tabulate(self.last_statistical_report, headers='keys', tablefmt='pretty', showindex=False),
+                )
 
         return df
 
