@@ -109,7 +109,7 @@ def calculate_tm_score(ref_pdb: str, target_pdb: str) -> float:
 
 def calculate_plddt(pdb_path: str) -> float:
     """
-    Extracts average pLDDT from the B-factor column of a PDB file.
+    Extracts average pLDDT from the B-factor column of CA atoms in a PDB file.
 
     Args:
         pdb_path: Path to the PDB file.
@@ -118,14 +118,21 @@ def calculate_plddt(pdb_path: str) -> float:
         float: Average pLDDT value.
     """
     parser = PDBParser(QUIET=True)
-    struct = parser.get_structure("struct", pdb_path)
+    try:
+        struct = parser.get_structure("struct", pdb_path)
+    except Exception as e:
+        logger.error(f"Error parsing PDB for pLDDT: {e}")
+        return 0.0
+
     bfactors = []
     for model in struct:
         for chain in model:
             for residue in chain:
-                for atom in residue:
-                    bfactors.append(atom.get_bfactor())
+                if "CA" in residue:
+                    bfactors.append(residue["CA"].get_bfactor())
+
     if not bfactors:
+        logger.warning(f"No CA atoms found in {pdb_path} for pLDDT calculation.")
         return 0.0
     return float(np.mean(bfactors))
 
