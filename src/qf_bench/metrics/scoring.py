@@ -1,7 +1,10 @@
 import numpy as np
 from Bio.PDB import PDBParser, Superimposer
 import os
+import logging
 from typing import Dict, Optional, List
+
+logger = logging.getLogger(__name__)
 
 def calculate_rmsd(ref_pdb: str, target_pdb: str) -> float:
     """
@@ -34,8 +37,12 @@ def calculate_rmsd(ref_pdb: str, target_pdb: str) -> float:
                     target_atoms.append(residue["CA"])
 
     # Ensure same number of atoms
+    if len(ref_atoms) != len(target_atoms):
+        logger.warning(f"Atom count mismatch between {ref_pdb} ({len(ref_atoms)}) and {target_pdb} ({len(target_atoms)}). Truncating to minimum.")
+
     min_len = min(len(ref_atoms), len(target_atoms))
     if min_len == 0:
+        logger.error(f"No CA atoms found in one or both PDB files: {ref_pdb}, {target_pdb}")
         return float('nan')
 
     ref_atoms = ref_atoms[:min_len]
@@ -75,8 +82,12 @@ def calculate_tm_score(ref_pdb: str, target_pdb: str) -> float:
                 if "CA" in residue:
                     target_coords.append(residue["CA"].get_coord())
 
+    if len(ref_coords) != len(target_coords):
+        logger.warning(f"Coordinate count mismatch for TM-score between {ref_pdb} and {target_pdb}. Truncating.")
+
     min_len = min(len(ref_coords), len(target_coords))
     if min_len == 0:
+        logger.error(f"No coordinates found for TM-score in {ref_pdb} or {target_pdb}")
         return 0.0
 
     ref_coords = np.array(ref_coords[:min_len])
@@ -149,8 +160,8 @@ def calculate_metrics(ref_pdb: str, target_pdb: str) -> Dict[str, float]:
         metrics["tm_score"] = calculate_tm_score(ref_pdb, target_pdb)
         metrics["plddt"] = calculate_plddt(target_pdb)
     except Exception as e:
-        print(f"Error calculating metrics: {e}")
-        metrics["rmsd"] = float('nan')
-        metrics["tm_score"] = 0.0
-        metrics["plddt"] = 0.0
+        logger.exception(f"Unexpected error calculating metrics for {target_pdb}: {e}")
+        metrics["rmsd"] = metrics.get("rmsd", float('nan'))
+        metrics["tm_score"] = metrics.get("tm_score", 0.0)
+        metrics["plddt"] = metrics.get("plddt", 0.0)
     return metrics
