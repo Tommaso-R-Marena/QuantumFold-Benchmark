@@ -3,7 +3,7 @@ import os
 import numpy as np
 from typing import Optional
 import logging
-from Bio.PDB import Structure, Model, Chain, Residue, Atom, PDBIO
+from ..utils.pdb_utils import save_to_pdb
 
 logger = logging.getLogger(__name__)
 
@@ -61,23 +61,17 @@ class AlphaFold3Wrapper(FoldingModel):
 
     def _simulate_af3_prediction(self, sequence: str, output_path: str) -> None:
         """High-fidelity simulation of AF3 output (linear with minimal jitter)."""
-        struct = Structure.Structure("af3")
-        model = Model.Model(0)
-        chain = Chain.Chain("A")
+        coords = []
+        plddts = []
         for i, aa in enumerate(sequence):
-            res = Residue.Residue((" ", i+1, " "), aa, i+1)
             # AF3 usually has high precision
             coord = np.array([float(i)*3.8,
                              np.random.normal(0, 0.05),
                              np.random.normal(0, 0.05)], dtype='f')
-            atom = Atom.Atom("CA", coord, 95.0 + np.random.uniform(-2, 2), 1.0, " ", "CA", i+1, "C")
-            res.add(atom)
-            chain.add(res)
-        model.add(chain)
-        struct.add(model)
-        io = PDBIO()
-        io.set_structure(struct)
-        io.save(output_path)
+            coords.append(coord)
+            plddts.append(95.0 + np.random.uniform(-2, 2))
+
+        save_to_pdb(sequence, np.array(coords), output_path, pdb_id="af3", plddts=np.array(plddts))
 
 class Boltz2Wrapper(FoldingModel):
     """
@@ -106,19 +100,13 @@ class Boltz2Wrapper(FoldingModel):
         return output_path
 
     def _simulate_boltz2_prediction(self, sequence: str, output_path: str) -> None:
-        struct = Structure.Structure("boltz2")
-        model = Model.Model(0)
-        chain = Chain.Chain("A")
+        coords = []
+        plddts = []
         for i, aa in enumerate(sequence):
-            res = Residue.Residue((" ", i+1, " "), aa, i+1)
             coord = np.array([float(i)*3.8 + 0.2,
                              np.random.normal(0.1, 0.1),
                              np.random.normal(-0.1, 0.1)], dtype='f')
-            atom = Atom.Atom("CA", coord, 92.0 + np.random.uniform(-5, 5), 1.0, " ", "CA", i+1, "C")
-            res.add(atom)
-            chain.add(res)
-        model.add(chain)
-        struct.add(model)
-        io = PDBIO()
-        io.set_structure(struct)
-        io.save(output_path)
+            coords.append(coord)
+            plddts.append(92.0 + np.random.uniform(-5, 5))
+
+        save_to_pdb(sequence, np.array(coords), output_path, pdb_id="boltz2", plddts=np.array(plddts))

@@ -12,19 +12,22 @@ def plot_benchmark_results(df: pd.DataFrame, output_dir: str):
         output_dir: Directory to save plots.
     """
     os.makedirs(output_dir, exist_ok=True)
+    sns.set_theme(style="whitegrid")
 
-    # 1. RMSD Boxplot
+    # 1. RMSD Boxplot with Swarm
     plt.figure(figsize=(12, 6))
     sns.boxplot(data=df, x='dataset', y='rmsd', hue='model')
+    sns.stripplot(data=df, x='dataset', y='rmsd', hue='model', dodge=True, alpha=0.5, color="black")
     plt.title('RMSD Comparison across Datasets')
     plt.ylabel('RMSD (Å)')
     plt.xlabel('Dataset')
     plt.savefig(os.path.join(output_dir, 'rmsd_comparison.png'))
     plt.close()
 
-    # 2. TM-score Boxplot
+    # 2. TM-score Boxplot with Swarm
     plt.figure(figsize=(12, 6))
     sns.boxplot(data=df, x='dataset', y='tm_score', hue='model')
+    sns.stripplot(data=df, x='dataset', y='tm_score', hue='model', dodge=True, alpha=0.5, color="black")
     plt.title('TM-score Comparison across Datasets')
     plt.ylabel('TM-score')
     plt.xlabel('Dataset')
@@ -33,8 +36,8 @@ def plot_benchmark_results(df: pd.DataFrame, output_dir: str):
 
     # 3. pLDDT Comparison
     plt.figure(figsize=(12, 6))
-    sns.barplot(data=df, x='dataset', y='plddt', hue='model')
-    plt.title('Average pLDDT Confidence by Model')
+    sns.barplot(data=df, x='dataset', y='plddt', hue='model', errorbar='sd')
+    plt.title('Average pLDDT Confidence by Model (with Std Dev)')
     plt.ylabel('pLDDT')
     plt.xlabel('Dataset')
     plt.savefig(os.path.join(output_dir, 'plddt_comparison.png'))
@@ -48,7 +51,9 @@ def generate_markdown_report(df: pd.DataFrame, output_path: str):
         df: DataFrame containing benchmark results.
         output_path: Path to save the markdown report.
     """
-    summary = df.groupby(['dataset', 'model'])[['rmsd', 'tm_score', 'plddt']].mean().reset_index()
+    summary = df.groupby(['dataset', 'model'])[['rmsd', 'tm_score', 'plddt']].agg(['mean', 'median', 'std']).reset_index()
+    # Flatten multi-index columns
+    summary.columns = [f"{col[0]}_{col[1]}" if col[1] else col[0] for col in summary.columns]
 
     with open(output_path, 'w') as f:
         f.write("# QuantumFold-Advantage Benchmark Report\n\n")

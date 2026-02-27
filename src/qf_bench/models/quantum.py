@@ -3,9 +3,9 @@ import logging
 from .base import FoldingModel
 from qiskit import QuantumCircuit
 from qiskit_aer import AerSimulator
-from Bio.PDB import PDBParser, PDBIO, Structure, Model, Chain, Residue, Atom, Polypeptide
 import os
 from typing import Optional
+from ..utils.pdb_utils import save_to_pdb
 
 logger = logging.getLogger(__name__)
 
@@ -86,10 +86,6 @@ class QuantumFoldAdvantage(FoldingModel):
         """
         Convert quantum bitstring to PDB coordinates using a more robust mapping.
         """
-        struct = Structure.Structure("predicted")
-        model = Model.Model(0)
-        chain = Chain.Chain("A")
-
         # Initial position
         pos = np.array([0.0, 0.0, 0.0], dtype='f')
 
@@ -101,14 +97,10 @@ class QuantumFoldAdvantage(FoldingModel):
             np.array([0, 0, 3.8]), np.array([0, 0, -3.8])
         ]
 
+        coords = []
+        plddts = []
+
         for i, aa in enumerate(sequence):
-            try:
-                res_name = Polypeptide.one_to_three(aa)
-            except:
-                res_name = "UNK"
-
-            res = Residue.Residue((" ", i+1, " "), res_name, i+1)
-
             # Use 3 bits to choose from 6 directions + some noise
             # We slide through the bitstring to use more of its information
             bit_idx = (i * 3) % len(bitstring)
@@ -122,18 +114,11 @@ class QuantumFoldAdvantage(FoldingModel):
             # Add some "quantum" jitter to avoid exact lattice collisions
             jitter = np.random.normal(0, 0.2, 3)
             pos = pos + step + jitter
+            coords.append(pos.copy())
 
-            # Add CA atom
             # Simulated pLDDT based on sequence length (shorter sequences are often easier)
             base_plddt = max(50.0, 95.0 - len(sequence) * 0.1)
             plddt = base_plddt + np.random.uniform(-10, 5)
-            atom = Atom.Atom("CA", pos.astype('f'), plddt, 1.0, " ", "CA", i+1, "C")
-            res.add(atom)
-            chain.add(res)
+            plddts.append(plddt)
 
-        model.add(chain)
-        struct.add(model)
-
-        io = PDBIO()
-        io.set_structure(struct)
-        io.save(output_path)
+        save_to_pdb(sequence, np.array(coords), output_path, plddts=np.array(plddts))

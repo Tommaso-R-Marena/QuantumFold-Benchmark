@@ -1,10 +1,11 @@
 import requests
 import pandas as pd
 import os
+import json
 import logging
 from typing import List, Dict, Optional
-from Bio.PDB import Structure, Model, Chain, Residue, Atom, PDBIO, Polypeptide
 import numpy as np
+from ..utils.pdb_utils import save_to_pdb
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +23,16 @@ class BenchmarkDataLoader:
         """
         self.cache_dir = cache_dir
         os.makedirs(cache_dir, exist_ok=True)
+        self.targets_file = os.path.join(os.path.dirname(__file__), "targets.json")
+        self._load_targets()
+
+    def _load_targets(self):
+        try:
+            with open(self.targets_file, 'r') as f:
+                self.all_targets = json.load(f)
+        except Exception as e:
+            logger.error(f"Failed to load targets from {self.targets_file}: {e}")
+            self.all_targets = {}
 
     def get_casp15_targets(self) -> List[Dict]:
         """
@@ -30,11 +41,7 @@ class BenchmarkDataLoader:
         Returns:
             List[Dict]: List of targets with 'id' and 'sequence'.
         """
-        return [
-            {"id": "1A2P", "sequence": "AQVINTFDGVADYLQTYHKLPDNYITKSEAQALGWVASKGNLADVAPGKSIGGDIFSNREGKLPGKSGRTWREADINYTSGFRNSDRILYSSDWLIYKTTDHYQTFTKIR"},
-            {"id": "7TLA", "sequence": "MAAHKGAEHHHKAAEHHEQAAKHHHAAAEHHEQAAKHHHAAAEHHEQAAKHHHAAAEHHEQAAKHHH"},
-            {"id": "8B2Y", "sequence": "MEKVQVALVAGSGGKGLVARAVAEAGAEVVVADLDEARLALALEAGAEVVVADLDEARLALAL"}
-        ]
+        return self.all_targets.get("casp15", [])
 
     def get_miniproteins(self) -> List[Dict]:
         """
@@ -43,11 +50,7 @@ class BenchmarkDataLoader:
         Returns:
             List[Dict]: List of targets with 'id' and 'sequence'.
         """
-        return [
-            {"id": "1L2Y", "sequence": "NLYIQWLKDGGPSSGRPPPS"}, # Trp-cage
-            {"id": "2L5A", "sequence": "GSMSMGYDMPEPPMLRPPPQFNPMLRPPPQFNPMLRPPPQFN"},
-            {"id": "6N9W", "sequence": "GSNLYIQWLKDGGPSSGRPPPS"}
-        ]
+        return self.all_targets.get("miniproteins", [])
 
     def get_idrs(self) -> List[Dict]:
         """
@@ -56,10 +59,7 @@ class BenchmarkDataLoader:
         Returns:
             List[Dict]: List of targets with 'id' and 'sequence'.
         """
-        return [
-            {"id": "1I0B", "sequence": "MELKVSKADIAELVKTLKAGQDAVELVKTLKAGQDAVELVKTLK"},
-            {"id": "1F0R", "sequence": "MDSKGSSQKGSRLLLLLVVSNLLLCQGVVSTPVCPNGPGNCQVSLRDLFDRAVMVSHYIHDLSS"}
-        ]
+        return self.all_targets.get("idrs", [])
 
     def download_pdb(self, pdb_id: str, sequence: Optional[str] = None) -> str:
         """
@@ -95,32 +95,16 @@ class BenchmarkDataLoader:
         Creates a dummy PDB file with a realistic-ish linear structure.
         Used when the real PDB is not available.
         """
-        struct = Structure.Structure(pdb_id)
-        model = Model.Model(0)
-        chain = Chain.Chain("A")
-
         # Use provided sequence or fallback to a default
         if not sequence:
             sequence = "G" * 50
             logger.info(f"No sequence provided for dummy {pdb_id}, using 50x Glycine.")
 
-        for i, aa in enumerate(sequence):
-            # Try to get 3-letter code, fallback to UNK
-            try:
-                res_name = Polypeptide.one_to_three(aa)
-            except:
-                res_name = "UNK"
-
-            res = Residue.Residue((" ", i+1, " "), res_name, i+1)
+        coords = []
+        for i in range(len(sequence)):
             # Linear arrangement with 3.8A between C-alpha atoms
             coord = np.array([float(i)*3.8, 0.0, 0.0], dtype='f')
-            atom = Atom.Atom("CA", coord, 100.0, 1.0, " ", "CA", i+1, "C")
-            res.add(atom)
-            chain.add(res)
+            coords.append(coord)
 
-        model.add(chain)
-        struct.add(model)
-        io = PDBIO()
-        io.set_structure(struct)
-        io.save(path)
+        save_to_pdb(sequence, np.array(coords), path, pdb_id=pdb_id)
         logger.info(f"Created robust dummy PDB for {pdb_id} at {path}")
