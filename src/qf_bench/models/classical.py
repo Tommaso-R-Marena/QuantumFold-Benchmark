@@ -2,7 +2,10 @@ from .base import FoldingModel
 import os
 import numpy as np
 import requests
+import logging
 from Bio.PDB import Structure, Model, Chain, Residue, Atom, PDBIO
+
+logger = logging.getLogger(__name__)
 
 class AlphaFold3Wrapper(FoldingModel):
     """
@@ -32,7 +35,7 @@ class AlphaFold3Wrapper(FoldingModel):
         and waits for the result.
         """
         if not self.api_token:
-            print("Warning: No AF3_API_TOKEN found. Falling back to high-fidelity simulation.")
+            logger.warning("No AF3_API_TOKEN found. Falling back to high-fidelity simulation.")
             self._simulate_af3_prediction(sequence, output_path)
             return output_path
 
@@ -50,7 +53,7 @@ class AlphaFold3Wrapper(FoldingModel):
             # Fallback for demo
             self._simulate_af3_prediction(sequence, output_path)
         except Exception as e:
-            print(f"AF3 API Error: {e}. Falling back to simulation.")
+            logger.error(f"AF3 API Error: {e}. Falling back to simulation.")
             self._simulate_af3_prediction(sequence, output_path)
 
         return output_path
@@ -87,7 +90,7 @@ class Boltz2Wrapper(FoldingModel):
         """
         Predict protein structure using Boltz-2.
         """
-        print(f"Running Boltz2 inference for sequence: {sequence[:10]}...")
+        logger.info(f"Running Boltz2 inference for sequence: {sequence[:10]}...")
         # Simulate local binary call
         # os.system(f"boltz-2 fold --seq {sequence} --out {output_path}")
         self._simulate_boltz2_prediction(sequence, output_path)

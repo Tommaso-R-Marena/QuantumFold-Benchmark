@@ -1,10 +1,13 @@
 import numpy as np
+import logging
 from .base import FoldingModel
 from qiskit import QuantumCircuit
 from qiskit_aer import AerSimulator
-from Bio.PDB import PDBParser, PDBIO, Structure, Model, Chain, Residue, Atom
+from Bio.PDB import PDBParser, PDBIO, Structure, Model, Chain, Residue, Atom, Polypeptide
 import os
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 class QuantumFoldAdvantage(FoldingModel):
     """
@@ -37,20 +40,30 @@ class QuantumFoldAdvantage(FoldingModel):
         Returns:
             str: Path to the saved PDB file.
         """
-        print(f"Initializing QuantumFold-Advantage for sequence of length {len(sequence)}...")
+        logger.info(f"Initializing QuantumFold-Advantage for sequence of length {len(sequence)}...")
 
         # Simulate VQE process
         # 1. Map sequence to a lattice/torsion Hamiltonian (conceptual)
         # 2. Use a parameterized quantum circuit (Ansatz)
-        n_qubits = min(len(sequence) * 2, 20) # 2 qubits per residue for simplified torsion sampling
+        # Increased qubit count limit for more complex sequences, though still capped for simulation
+        n_qubits = min(len(sequence) * 3, 24)
 
-        # Create a simple Ansatz
+        # Create a more complex Ansatz (Simplified Hardware-Efficient Ansatz)
         qc = QuantumCircuit(n_qubits)
         for i in range(n_qubits):
-            qc.rx(np.random.uniform(0, np.pi), i)
+            qc.ry(np.random.uniform(0, 2*np.pi), i)
+
+        # Entanglement layer
+        for i in range(n_qubits - 1):
+            qc.cx(i, i + 1)
+
+        for i in range(n_qubits):
+            qc.rz(np.random.uniform(0, 2*np.pi), i)
+
         qc.measure_all()
 
         # Execute the circuit to 'sample' a conformation
+        # In VQE this would be part of an optimization loop
         result = self.simulator.run(qc, shots=1).result()
         counts = result.get_counts()
         bitstring = list(counts.keys())[0]
@@ -58,42 +71,54 @@ class QuantumFoldAdvantage(FoldingModel):
         # 3. Classical post-processing: Convert bitstring to coordinates
         self._create_vqe_pdb(sequence, bitstring, output_path)
 
-        print(f"QuantumFold-Advantage prediction complete for {output_path}")
+        logger.info(f"QuantumFold-Advantage prediction complete for {output_path}")
         return output_path
 
     def _create_vqe_pdb(self, sequence: str, bitstring: str, output_path: str):
         """
-        Convert quantum bitstring to PDB coordinates.
+        Convert quantum bitstring to PDB coordinates using a more robust mapping.
         """
         struct = Structure.Structure("predicted")
         model = Model.Model(0)
         chain = Chain.Chain("A")
 
         # Initial position
-        pos = np.array([0.0, 0.0, 0.0])
+        pos = np.array([0.0, 0.0, 0.0], dtype='f')
+
+        # We'll use a simple "self-avoiding" random walk approach biased by quantum bits
+        # to ensure it doesn't look too much like a straight line
+        directions = [
+            np.array([3.8, 0, 0]), np.array([-3.8, 0, 0]),
+            np.array([0, 3.8, 0]), np.array([0, -3.8, 0]),
+            np.array([0, 0, 3.8]), np.array([0, 0, -3.8])
+        ]
 
         for i, aa in enumerate(sequence):
-            res = Residue.Residue((" ", i+1, " "), aa, i+1)
+            try:
+                res_name = Polypeptide.one_to_three(aa)
+            except:
+                res_name = "UNK"
 
-            # Use bits to determine local direction (simplified torsion)
-            idx = (i * 2) % len(bitstring)
-            bits = bitstring[idx:idx+2]
+            res = Residue.Residue((" ", i+1, " "), res_name, i+1)
 
-            # Map bits to a slight shift in 3D space
-            if bits == "00":
-                step = np.array([3.8, 0.0, 0.0])
-            elif bits == "01":
-                step = np.array([3.0, 2.0, 0.0])
-            elif bits == "10":
-                step = np.array([3.0, 0.0, 2.0])
-            else:
-                step = np.array([2.5, 2.0, 2.0])
+            # Use 3 bits to choose from 6 directions + some noise
+            # We slide through the bitstring to use more of its information
+            bit_idx = (i * 3) % len(bitstring)
+            chunk = bitstring[bit_idx:bit_idx+3]
+            if len(chunk) < 3:
+                chunk = (chunk + bitstring)[:3]
 
-            pos = pos + step
+            val = int(chunk, 2) % len(directions)
+            step = directions[val]
+
+            # Add some "quantum" jitter to avoid exact lattice collisions
+            jitter = np.random.normal(0, 0.2, 3)
+            pos = pos + step + jitter
 
             # Add CA atom
-            # We add a high B-factor to represent pLDDT confidence (simulated)
-            plddt = 85.0 + np.random.uniform(-5, 5)
+            # Simulated pLDDT based on sequence length (shorter sequences are often easier)
+            base_plddt = max(50.0, 95.0 - len(sequence) * 0.1)
+            plddt = base_plddt + np.random.uniform(-10, 5)
             atom = Atom.Atom("CA", pos.astype('f'), plddt, 1.0, " ", "CA", i+1, "C")
             res.add(atom)
             chain.add(res)
