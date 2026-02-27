@@ -19,6 +19,7 @@ def main():
     parser.add_argument("--output-dir", type=str, default="results", help="Directory to save results")
     parser.add_argument("--datasets", nargs="+", choices=["casp15", "miniproteins", "idrs"],
                         default=["casp15", "miniproteins", "idrs"], help="Datasets to run")
+    parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility")
     parser.add_argument("--verbose", action="store_true", help="Enable verbose logging")
 
     args = parser.parse_args()
@@ -30,7 +31,7 @@ def main():
 
     # Initialize models
     models = [
-        QuantumFoldAdvantage(),
+        QuantumFoldAdvantage(seed=args.seed),
         AlphaFold3Wrapper(api_token=os.getenv("AF3_TOKEN")),
         Boltz2Wrapper()
     ]

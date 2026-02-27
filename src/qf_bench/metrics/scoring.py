@@ -1,14 +1,56 @@
 import numpy as np
-from Bio.PDB import PDBParser, Superimposer
+from Bio.PDB import PDBParser, Superimposer, Atom
 import os
 import logging
-from typing import Dict, Optional, List
+from typing import Dict, Optional, List, Tuple
 
 logger = logging.getLogger(__name__)
 
+def _get_ca_atoms_dict(structure) -> Dict[Tuple, Atom.Atom]:
+    """Helper to extract CA atoms with (chain_id, res_id) as keys."""
+    ca_atoms = {}
+    for model in structure:
+        for chain in model:
+            chain_id = chain.get_id()
+            for residue in chain:
+                if "CA" in residue:
+                    res_id = residue.get_id()
+                    ca_atoms[(chain_id, res_id)] = residue["CA"]
+    return ca_atoms
+
+def get_common_ca_atoms(ref_pdb: str, target_pdb: str) -> Tuple[List[Atom.Atom], List[Atom.Atom]]:
+    """
+    Parses two PDB files and returns lists of CA atoms common to both,
+    matched by chain and residue ID.
+    """
+    parser = PDBParser(QUIET=True)
+    try:
+        ref_struct = parser.get_structure("ref", ref_pdb)
+        target_struct = parser.get_structure("target", target_pdb)
+    except Exception as e:
+        logger.error(f"Error parsing PDB files for atom matching: {e}")
+        return [], []
+
+    ref_ca = _get_ca_atoms_dict(ref_struct)
+    target_ca = _get_ca_atoms_dict(target_struct)
+
+    common_keys = sorted(set(ref_ca.keys()) & set(target_ca.keys()))
+
+    if not common_keys:
+        logger.warning(f"No common CA atoms found between {ref_pdb} and {target_pdb}")
+        return [], []
+
+    if len(common_keys) != len(ref_ca) or len(common_keys) != len(target_ca):
+        logger.info(f"Matched {len(common_keys)} CA atoms (Ref total: {len(ref_ca)}, Target total: {len(target_ca)})")
+
+    ref_list = [ref_ca[k] for k in common_keys]
+    target_list = [target_ca[k] for k in common_keys]
+
+    return ref_list, target_list
+
 def calculate_rmsd(ref_pdb: str, target_pdb: str) -> float:
     """
-    Calculates RMSD between two PDB files using CA atoms.
+    Calculates RMSD between two PDB files using matched CA atoms.
 
     Args:
         ref_pdb: Path to the reference PDB file.
@@ -17,36 +59,10 @@ def calculate_rmsd(ref_pdb: str, target_pdb: str) -> float:
     Returns:
         float: The RMSD value.
     """
-    parser = PDBParser(QUIET=True)
-    ref_struct = parser.get_structure("ref", ref_pdb)
-    target_struct = parser.get_structure("target", target_pdb)
+    ref_atoms, target_atoms = get_common_ca_atoms(ref_pdb, target_pdb)
 
-    ref_atoms = []
-    target_atoms = []
-
-    for model in ref_struct:
-        for chain in model:
-            for residue in chain:
-                if "CA" in residue:
-                    ref_atoms.append(residue["CA"])
-
-    for model in target_struct:
-        for chain in model:
-            for residue in chain:
-                if "CA" in residue:
-                    target_atoms.append(residue["CA"])
-
-    # Ensure same number of atoms
-    if len(ref_atoms) != len(target_atoms):
-        logger.warning(f"Atom count mismatch between {ref_pdb} ({len(ref_atoms)}) and {target_pdb} ({len(target_atoms)}). Truncating to minimum.")
-
-    min_len = min(len(ref_atoms), len(target_atoms))
-    if min_len == 0:
-        logger.error(f"No CA atoms found in one or both PDB files: {ref_pdb}, {target_pdb}")
+    if not ref_atoms:
         return float('nan')
-
-    ref_atoms = ref_atoms[:min_len]
-    target_atoms = target_atoms[:min_len]
 
     superimposer = Superimposer()
     superimposer.set_atoms(ref_atoms, target_atoms)
@@ -54,7 +70,7 @@ def calculate_rmsd(ref_pdb: str, target_pdb: str) -> float:
 
 def calculate_tm_score(ref_pdb: str, target_pdb: str) -> float:
     """
-    Calculates an approximate TM-score between two PDB files.
+    Calculates an approximate TM-score between two PDB files using matched CA atoms.
 
     Args:
         ref_pdb: Path to the reference PDB file.
@@ -63,60 +79,30 @@ def calculate_tm_score(ref_pdb: str, target_pdb: str) -> float:
     Returns:
         float: The TM-score value (0 to 1).
     """
-    parser = PDBParser(QUIET=True)
-    ref_struct = parser.get_structure("ref", ref_pdb)
-    target_struct = parser.get_structure("target", target_pdb)
+    ref_atoms, target_atoms = get_common_ca_atoms(ref_pdb, target_pdb)
 
-    ref_coords = []
-    target_coords = []
-
-    for model in ref_struct:
-        for chain in model:
-            for residue in chain:
-                if "CA" in residue:
-                    ref_coords.append(residue["CA"].get_coord())
-
-    for model in target_struct:
-        for chain in model:
-            for residue in chain:
-                if "CA" in residue:
-                    target_coords.append(residue["CA"].get_coord())
-
-    if len(ref_coords) != len(target_coords):
-        logger.warning(f"Coordinate count mismatch for TM-score between {ref_pdb} and {target_pdb}. Truncating.")
-
-    min_len = min(len(ref_coords), len(target_coords))
-    if min_len == 0:
-        logger.error(f"No coordinates found for TM-score in {ref_pdb} or {target_pdb}")
+    if not ref_atoms:
         return 0.0
 
-    ref_coords = np.array(ref_coords[:min_len])
-    target_coords = np.array(target_coords[:min_len])
+    # Superimpose using Bio.PDB.Superimposer (uses Kabsch algorithm internally)
+    superimposer = Superimposer()
+    superimposer.set_atoms(ref_atoms, target_atoms)
+    superimposer.apply(target_atoms)
 
-    # Superimpose to get minimal distances
-    # We use a simple Kabsch alignment for CA atoms
-    def kabsch(A, B):
-        centroid_A = np.mean(A, axis=0)
-        centroid_B = np.mean(B, axis=0)
-        AA = A - centroid_A
-        BB = B - centroid_B
-        H = np.dot(AA.T, BB)
-        U, S, Vt = np.linalg.svd(H)
-        R = np.dot(Vt.T, U.T)
-        if np.linalg.det(R) < 0:
-            Vt[2, :] *= -1
-            R = np.dot(Vt.T, U.T)
-        t = centroid_B - np.dot(centroid_A, R)
-        return R, t
+    ref_coords = np.array([a.get_coord() for a in ref_atoms])
+    target_coords = np.array([a.get_coord() for a in target_atoms])
 
-    R, t = kabsch(ref_coords, target_coords)
-    ref_aligned = np.dot(ref_coords, R) + t
+    distances = np.linalg.norm(ref_coords - target_coords, axis=1)
 
-    distances = np.linalg.norm(ref_aligned - target_coords, axis=1)
+    # TM-score formula: 1/L_target * sum(1 / (1 + (d_i/d0)^2))
+    # Note: L_target should be the length of the reference protein
+    L_target = len(ref_atoms)
+    if L_target == 0:
+        return 0.0
 
-    L_target = len(ref_coords)
     d0 = 1.24 * (max(L_target, 15) - 15)**(1/3) - 1.8
-    if d0 <= 0.5: d0 = 0.5
+    if d0 <= 0.5:
+        d0 = 0.5
 
     tm_score = np.sum(1.0 / (1.0 + (distances / d0)**2)) / L_target
     return tm_score

@@ -59,6 +59,11 @@ def generate_markdown_report(df: pd.DataFrame, output_path: str):
         f.write(summary.to_markdown(index=False))
         f.write("\n\n")
 
+        f.write("## Detailed Results per Target\n\n")
+        detailed = df[['dataset', 'target_id', 'model', 'rmsd', 'tm_score', 'plddt']].sort_values(['dataset', 'target_id'])
+        f.write(detailed.to_markdown(index=False))
+        f.write("\n\n")
+
         f.write("## Visualizations\n")
         f.write("### RMSD Comparison\n")
         f.write("![RMSD Comparison](rmsd_comparison.png)\n\n")

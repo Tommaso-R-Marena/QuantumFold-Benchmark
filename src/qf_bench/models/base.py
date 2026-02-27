@@ -1,23 +1,26 @@
 from abc import ABC, abstractmethod
-from typing import Optional
 
 class FoldingModel(ABC):
     """
     Abstract base class for protein folding models.
-    All model wrappers should inherit from this class.
+    All model wrappers should inherit from this class to ensure a consistent
+    interface across different folding engines (quantum, classical, or API-based).
     """
 
     @abstractmethod
     def predict(self, sequence: str, output_path: str) -> str:
         """
-        Predicts the 3D structure for a given amino acid sequence.
+        Predicts the 3D structure for a given amino acid sequence and saves it to a PDB file.
 
         Args:
-            sequence (str): The amino acid sequence of the protein.
-            output_path (str): The path where the resulting PDB file should be saved.
+            sequence (str): The amino acid sequence of the protein (e.g., "MKV...").
+            output_path (str): The filesystem path where the resulting PDB file should be saved.
 
         Returns:
-            str: The path to the saved PDB file.
+            str: The absolute or relative path to the saved PDB file.
+
+        Raises:
+            Exception: If prediction fails or output cannot be written.
         """
         pass
 
@@ -25,9 +28,9 @@ class FoldingModel(ABC):
     @abstractmethod
     def name(self) -> str:
         """
-        Returns the name of the model.
+        Returns the human-readable name of the model.
 
         Returns:
-            str: Model name.
+            str: The model name (e.g., "AlphaFold3", "QuantumFold-Advantage").
         """
         pass
