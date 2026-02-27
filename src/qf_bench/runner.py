@@ -19,17 +19,30 @@ class BenchmarkRunner:
         os.makedirs(output_dir, exist_ok=True)
 
     def run_benchmark(self, dataset_name: str, targets: List[Dict]) -> pd.DataFrame:
+        """
+        Runs the benchmark suite on a specific dataset.
+
+        Args:
+            dataset_name (str): Name of the dataset (e.g., "CASP15").
+            targets (List[Dict]): List of target dictionaries with 'id' and 'sequence'.
+
+        Returns:
+            pd.DataFrame: DataFrame containing the benchmarking results.
+        """
         results = []
         logger.info(f"Starting benchmark for dataset: {dataset_name} ({len(targets)} targets)")
 
         for target in tqdm(targets, desc=f"Dataset: {dataset_name}"):
             target_id = target["id"]
             sequence = target["sequence"]
-            logger.debug(f"Benchmarking target {target_id}...")
+            logger.info(f"Benchmarking target {target_id} (length {len(sequence)})...")
 
-            # In a real benchmark, we'd have a ground truth PDB.
-            # Here we either download it or use a placeholder.
-            ground_truth_path = self.data_loader.download_pdb(target_id, sequence=sequence)
+            # Fetch or generate ground truth PDB
+            try:
+                ground_truth_path = self.data_loader.download_pdb(target_id, sequence=sequence)
+            except Exception as e:
+                logger.error(f"Failed to obtain ground truth for {target_id}: {e}")
+                continue
 
             for model in self.models:
                 logger.debug(f"  Running model {model.name}...")
@@ -49,11 +62,15 @@ class BenchmarkRunner:
                 except Exception as e:
                     logger.error(f"Error running {model.name} on {target_id}: {e}")
 
+        if not results:
+            logger.warning(f"No results generated for dataset: {dataset_name}")
+            return pd.DataFrame()
+
         df = pd.DataFrame(results)
-        if not df.empty:
-            summary = df.groupby("model")[["rmsd", "tm_score", "plddt"]].mean().reset_index()
-            print(f"\nSummary for {dataset_name}:")
-            print(tabulate(summary, headers="keys", tablefmt="pretty", showindex=False))
+
+        # Display summary in console
+        summary = df.groupby("model")[["rmsd", "tm_score", "plddt"]].mean().reset_index()
+        logger.info(f"\nSummary for {dataset_name}:\n{tabulate(summary, headers='keys', tablefmt='pretty', showindex=False)}")
 
         return df
 

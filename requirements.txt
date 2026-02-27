@@ -7,7 +7,6 @@ scipy
 pytest
 matplotlib
 seaborn
-biotite
 qiskit
 qiskit-aer
 tabulate

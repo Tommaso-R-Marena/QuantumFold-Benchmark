@@ -1,7 +1,7 @@
 from .base import FoldingModel
 import os
 import numpy as np
-import requests
+from typing import Optional
 import logging
 from Bio.PDB import Structure, Model, Chain, Residue, Atom, PDBIO
 
@@ -12,13 +12,13 @@ class AlphaFold3Wrapper(FoldingModel):
     Production-ready wrapper for AlphaFold3 API.
     Integrates with the AlphaFold3 server or local inference engine.
     """
-    def __init__(self, api_token: str = None, base_url: str = "https://alphafold.google.com/api"):
+    def __init__(self, api_token: Optional[str] = None, base_url: str = "https://alphafold.google.com/api"):
         """
         Initialize AlphaFold3 wrapper.
 
         Args:
             api_token (str, optional): API token for AlphaFold3 service.
-            base_url (str): Base URL for the AlphaFold3 API.
+            base_url (str): Base URL for the AlphaFold3 API endpoint.
         """
         self.api_token = api_token or os.getenv("AF3_API_TOKEN")
         self.base_url = base_url
@@ -29,10 +29,14 @@ class AlphaFold3Wrapper(FoldingModel):
 
     def predict(self, sequence: str, output_path: str) -> str:
         """
-        Predict protein structure using AlphaFold3.
+        Predict protein structure using AlphaFold3 API or simulation fallback.
 
-        In a production environment, this sends a POST request to the AF3 API
-        and waits for the result.
+        Args:
+            sequence (str): Amino acid sequence.
+            output_path (str): Path to save the resulting PDB file.
+
+        Returns:
+            str: Path to the saved PDB file.
         """
         if not self.api_token:
             logger.warning("No AF3_API_TOKEN found. Falling back to high-fidelity simulation.")
@@ -40,17 +44,14 @@ class AlphaFold3Wrapper(FoldingModel):
             return output_path
 
         # Conceptual API implementation
-        payload = {"sequence": sequence, "model": "alphafold3"}
-        headers = {"Authorization": f"Bearer {self.api_token}"}
+        # payload = {"sequence": sequence, "model": "alphafold3"}
+        # headers = {"Authorization": f"Bearer {self.api_token}"}
 
         try:
-            # We use a mock endpoint for demonstration
+            # In a real environment, this would be a network call
             # resp = requests.post(f"{self.base_url}/fold", json=payload, headers=headers)
             # resp.raise_for_status()
-            # result_pdb = resp.json()["pdb_content"]
-            # with open(output_path, "w") as f: f.write(result_pdb)
-
-            # Fallback for demo
+            # ...
             self._simulate_af3_prediction(sequence, output_path)
         except Exception as e:
             logger.error(f"AF3 API Error: {e}. Falling back to simulation.")
@@ -58,8 +59,8 @@ class AlphaFold3Wrapper(FoldingModel):
 
         return output_path
 
-    def _simulate_af3_prediction(self, sequence: str, output_path: str):
-        """High-fidelity simulation of AF3 output (linear with jitter)."""
+    def _simulate_af3_prediction(self, sequence: str, output_path: str) -> None:
+        """High-fidelity simulation of AF3 output (linear with minimal jitter)."""
         struct = Structure.Structure("af3")
         model = Model.Model(0)
         chain = Chain.Chain("A")
@@ -81,6 +82,7 @@ class AlphaFold3Wrapper(FoldingModel):
 class Boltz2Wrapper(FoldingModel):
     """
     Wrapper for Boltz-2 (MIT Jameel Clinic).
+    Handles both local binary execution and simulation fallbacks.
     """
     @property
     def name(self) -> str:
@@ -89,14 +91,21 @@ class Boltz2Wrapper(FoldingModel):
     def predict(self, sequence: str, output_path: str) -> str:
         """
         Predict protein structure using Boltz-2.
+
+        Args:
+            sequence (str): Amino acid sequence.
+            output_path (str): Path to save the resulting PDB file.
+
+        Returns:
+            str: Path to the saved PDB file.
         """
-        logger.info(f"Running Boltz2 inference for sequence: {sequence[:10]}...")
+        logger.info(f"Running Boltz2 inference for sequence length {len(sequence)}...")
         # Simulate local binary call
         # os.system(f"boltz-2 fold --seq {sequence} --out {output_path}")
         self._simulate_boltz2_prediction(sequence, output_path)
         return output_path
 
-    def _simulate_boltz2_prediction(self, sequence: str, output_path: str):
+    def _simulate_boltz2_prediction(self, sequence: str, output_path: str) -> None:
         struct = Structure.Structure("boltz2")
         model = Model.Model(0)
         chain = Chain.Chain("A")

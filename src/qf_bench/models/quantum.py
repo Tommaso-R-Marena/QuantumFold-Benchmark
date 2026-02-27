@@ -15,15 +15,19 @@ class QuantumFoldAdvantage(FoldingModel):
     Uses a Variational Quantum Eigensolver (VQE) approach to find low-energy
     conformations by mapping the folding Hamiltonian to a quantum circuit.
     """
-    def __init__(self, api_key: Optional[str] = None):
+    def __init__(self, api_key: Optional[str] = None, seed: Optional[int] = None):
         """
         Initialize the QuantumFold-Advantage model.
 
         Args:
-            api_key: Optional API key for quantum hardware access.
+            api_key (str, optional): API key for quantum hardware access.
+            seed (int, optional): Random seed for reproducibility of simulation.
         """
         self.api_key = api_key
         self.simulator = AerSimulator()
+        self.seed = seed
+        if seed is not None:
+            np.random.seed(seed)
 
     @property
     def name(self) -> str:
@@ -34,8 +38,8 @@ class QuantumFoldAdvantage(FoldingModel):
         Predict protein structure using a simulated hybrid quantum-classical algorithm.
 
         Args:
-            sequence: Amino acid sequence.
-            output_path: Path to save the resulting PDB file.
+            sequence (str): Amino acid sequence.
+            output_path (str): Path to save the resulting PDB file.
 
         Returns:
             str: Path to the saved PDB file.
@@ -45,26 +49,30 @@ class QuantumFoldAdvantage(FoldingModel):
         # Simulate VQE process
         # 1. Map sequence to a lattice/torsion Hamiltonian (conceptual)
         # 2. Use a parameterized quantum circuit (Ansatz)
-        # Increased qubit count limit for more complex sequences, though still capped for simulation
+        # Qubits represent torsion angles or lattice positions
         n_qubits = min(len(sequence) * 3, 24)
 
-        # Create a more complex Ansatz (Simplified Hardware-Efficient Ansatz)
+        # Create a Hardware-Efficient Ansatz
         qc = QuantumCircuit(n_qubits)
+
+        # State preparation / Initial rotation layer
         for i in range(n_qubits):
             qc.ry(np.random.uniform(0, 2*np.pi), i)
 
-        # Entanglement layer
-        for i in range(n_qubits - 1):
-            qc.cx(i, i + 1)
+        # Entanglement layer (linear topology)
+        if n_qubits > 1:
+            for i in range(n_qubits - 1):
+                qc.cx(i, i + 1)
 
+        # Refinement rotation layer
         for i in range(n_qubits):
             qc.rz(np.random.uniform(0, 2*np.pi), i)
 
         qc.measure_all()
 
         # Execute the circuit to 'sample' a conformation
-        # In VQE this would be part of an optimization loop
-        result = self.simulator.run(qc, shots=1).result()
+        # In a real VQE, this would be inside an optimization loop
+        result = self.simulator.run(qc, shots=1, seed_simulator=self.seed).result()
         counts = result.get_counts()
         bitstring = list(counts.keys())[0]
 
@@ -74,7 +82,7 @@ class QuantumFoldAdvantage(FoldingModel):
         logger.info(f"QuantumFold-Advantage prediction complete for {output_path}")
         return output_path
 
-    def _create_vqe_pdb(self, sequence: str, bitstring: str, output_path: str):
+    def _create_vqe_pdb(self, sequence: str, bitstring: str, output_path: str) -> None:
         """
         Convert quantum bitstring to PDB coordinates using a more robust mapping.
         """
