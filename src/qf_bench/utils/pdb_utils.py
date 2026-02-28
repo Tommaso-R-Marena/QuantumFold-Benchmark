@@ -1,9 +1,12 @@
-import numpy as np
-from Bio.PDB import Structure, Model, Chain, Residue, Atom, PDBIO, Polypeptide
 import logging
-from typing import List, Optional
+from typing import Optional
+
+import numpy as np
+from Bio.PDB import PDBIO, Chain, Model, Polypeptide, Residue, Structure
+from Bio.PDB.Atom import Atom
 
 logger = logging.getLogger(__name__)
+
 
 def save_to_pdb(
     sequence: str,
@@ -11,7 +14,7 @@ def save_to_pdb(
     output_path: str,
     pdb_id: str = "predicted",
     plddts: Optional[np.ndarray] = None,
-    occupancy: float = 1.0
+    occupancy: float = 1.0,
 ) -> str:
     """
     Saves a protein sequence and coordinates to a PDB file.
@@ -28,7 +31,9 @@ def save_to_pdb(
         str: Path to the saved PDB file.
     """
     if len(sequence) != len(coords):
-        raise ValueError(f"Sequence length ({len(sequence)}) must match coordinates length ({len(coords)})")
+        raise ValueError(
+            f"Sequence length ({len(sequence)}) must match coordinates length ({len(coords)})"
+        )
 
     struct = Structure.Structure(pdb_id)
     model = Model.Model(0)
@@ -42,17 +47,10 @@ def save_to_pdb(
 
         res = Residue.Residue((" ", i + 1, " "), res_name, i + 1)
 
-        b_factor = plddts[i] if plddts is not None else 100.0
+        b_factor = float(plddts[i]) if plddts is not None else 100.0
 
-        atom = Atom.Atom(
-            "CA",
-            coord.astype('f'),
-            b_factor,
-            occupancy,
-            " ",
-            "CA",
-            i + 1,
-            "C"
+        atom = Atom(
+            "CA", coord.astype("f"), b_factor, occupancy, " ", "CA", i + 1, "C"
         )
         res.add(atom)
         chain.add(res)

@@ -1,40 +1,47 @@
-import requests
-import pandas as pd
-import os
 import json
 import logging
-from typing import List, Dict, Optional
+from pathlib import Path
+from threading import Lock
+from typing import Dict, List, Optional
+
 import numpy as np
+import pandas as pd
+import requests
+
 from ..utils.pdb_utils import save_to_pdb
 
 logger = logging.getLogger(__name__)
+
 
 class BenchmarkDataLoader:
     """
     Data loader for protein folding benchmarks.
     Handles fetching of CASP15, miniproteins, and IDRs.
     """
-    def __init__(self, cache_dir: str = "data/cache"):
+
+    def __init__(self, cache_dir: str | Path = "data/cache"):
         """
         Initialize the data loader.
 
         Args:
             cache_dir: Directory to cache downloaded PDB files.
         """
-        self.cache_dir = cache_dir
-        os.makedirs(cache_dir, exist_ok=True)
-        self.targets_file = os.path.join(os.path.dirname(__file__), "targets.json")
+        self.cache_dir = Path(cache_dir)
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        self.targets_file = Path(__file__).parent / "targets.json"
+        self._download_lock = Lock()
+        self.all_targets: Dict[str, List[Dict[str, str]]] = {}
         self._load_targets()
 
-    def _load_targets(self):
+    def _load_targets(self) -> None:
         try:
-            with open(self.targets_file, 'r') as f:
+            with open(self.targets_file, "r") as f:
                 self.all_targets = json.load(f)
         except Exception as e:
             logger.error(f"Failed to load targets from {self.targets_file}: {e}")
             self.all_targets = {}
 
-    def get_casp15_targets(self) -> List[Dict]:
+    def get_casp15_targets(self) -> List[Dict[str, str]]:
         """
         Fetch representative CASP15 target metadata.
 
@@ -43,7 +50,7 @@ class BenchmarkDataLoader:
         """
         return self.all_targets.get("casp15", [])
 
-    def get_miniproteins(self) -> List[Dict]:
+    def get_miniproteins(self) -> List[Dict[str, str]]:
         """
         Fetch representative miniprotein targets.
 
@@ -52,7 +59,7 @@ class BenchmarkDataLoader:
         """
         return self.all_targets.get("miniproteins", [])
 
-    def get_idrs(self) -> List[Dict]:
+    def get_idrs(self) -> List[Dict[str, str]]:
         """
         Fetch targets with Intrinsically Disordered Regions.
 
@@ -64,6 +71,7 @@ class BenchmarkDataLoader:
     def download_pdb(self, pdb_id: str, sequence: Optional[str] = None) -> str:
         """
         Download a PDB file from RCSB or create a dummy if not available.
+        Thread-safe implementation.
 
         Args:
             pdb_id: The 4-character PDB ID.
@@ -72,25 +80,32 @@ class BenchmarkDataLoader:
         Returns:
             str: Path to the downloaded/generated PDB file.
         """
-        path = os.path.join(self.cache_dir, f"{pdb_id}.pdb")
-        if not os.path.exists(path):
-            url = f"https://files.rcsb.org/download/{pdb_id}.pdb"
-            try:
-                logger.info(f"Attempting to download PDB {pdb_id} from RCSB...")
-                resp = requests.get(url, timeout=10)
-                if resp.status_code == 200:
-                    with open(path, "w") as f:
-                        f.write(resp.text)
-                    logger.info(f"Successfully downloaded PDB {pdb_id}")
-                else:
-                    logger.warning(f"PDB {pdb_id} not found in RCSB (Status: {resp.status_code}). Creating dummy.")
-                    self._create_robust_dummy_pdb(pdb_id, path, sequence)
-            except Exception as e:
-                logger.error(f"Error downloading PDB {pdb_id}: {e}. Creating dummy.")
-                self._create_robust_dummy_pdb(pdb_id, path, sequence)
-        return path
+        path = self.cache_dir / f"{pdb_id}.pdb"
 
-    def _create_robust_dummy_pdb(self, pdb_id: str, path: str, sequence: Optional[str] = None):
+        with self._download_lock:
+            if not path.exists():
+                url = f"https://files.rcsb.org/download/{pdb_id}.pdb"
+                try:
+                    logger.info(f"Attempting to download PDB {pdb_id} from RCSB...")
+                    resp = requests.get(url, timeout=10)
+                    if resp.status_code == 200:
+                        with open(path, "w") as f:
+                            f.write(resp.text)
+                        logger.info(f"Successfully downloaded PDB {pdb_id}")
+                    else:
+                        logger.warning(
+                            f"PDB {pdb_id} not found in RCSB (Status: {resp.status_code}). Creating dummy."
+                        )
+                        self._create_robust_dummy_pdb(pdb_id, path, sequence)
+                except Exception as e:
+                    logger.error(f"Error downloading PDB {pdb_id}: {e}. Creating dummy.")
+                    self._create_robust_dummy_pdb(pdb_id, path, sequence)
+
+        return str(path)
+
+    def _create_robust_dummy_pdb(
+        self, pdb_id: str, path: Path, sequence: Optional[str] = None
+    ) -> None:
         """
         Creates a dummy PDB file with a realistic-ish linear structure.
         Used when the real PDB is not available.
@@ -103,8 +118,8 @@ class BenchmarkDataLoader:
         coords = []
         for i in range(len(sequence)):
             # Linear arrangement with 3.8A between C-alpha atoms
-            coord = np.array([float(i)*3.8, 0.0, 0.0], dtype='f')
+            coord = np.array([float(i) * 3.8, 0.0, 0.0], dtype="f")
             coords.append(coord)
 
-        save_to_pdb(sequence, np.array(coords), path, pdb_id=pdb_id)
+        save_to_pdb(sequence, np.array(coords), str(path), pdb_id=pdb_id)
         logger.info(f"Created robust dummy PDB for {pdb_id} at {path}")

@@ -14,7 +14,7 @@ QuantumFold-Advantage leverages hybrid quantum-classical algorithms (e.g., VQE) 
   - `QuantumFold-Advantage`: Hybrid quantum-classical solver (simulated via Qiskit).
   - `AlphaFold3`: Proprietary industry leader.
   - `Boltz2`: Open-source high-performance alternative.
-- **Metrics**: Production-grade structural metrics including RMSD, TM-score, and pLDDT.
+- **Metrics**: Production-grade structural metrics including RMSD, TM-score, GDT-TS, and pLDDT.
 - **Reporting**: Automated generation of markdown reports and Seaborn-based visualizations.
 - **Colab Ready**: Designed to run seamlessly in Google Colab for democratization of quantum research.
 
@@ -36,7 +36,28 @@ python scripts/run_benchmarks.py
 Results will be saved in the `results/` directory, including:
 - `benchmark_results.csv`: Raw data.
 - `report.md`: Summary report.
-- `rmsd_comparison.png`, `tm_score_comparison.png`, `plddt_comparison.png`: Visualizations.
+- `rmsd_comparison.png`, `tm_score_comparison.png`, `gdt_ts_comparison.png`, `plddt_comparison.png`, `plddt_distribution.png`: Visualizations.
+
+## Advanced Usage
+
+### Adding Custom Models
+To add a new model, create a new class in `src/qf_bench/models/` that inherits from `FoldingModel` and implements the `predict` method and `name` property.
+
+```python
+from qf_bench.models.base import FoldingModel
+
+class MyNewModel(FoldingModel):
+    @property
+    def name(self) -> str:
+        return "MyNewModel"
+
+    def predict(self, sequence: str, output_path: str) -> str:
+        # Implementation here
+        return output_path
+```
+
+### Adding Custom Datasets
+Update `src/qf_bench/data/targets.json` with your new dataset name and a list of target IDs and sequences.
 
 ## Project Structure
 
@@ -54,7 +75,8 @@ Results will be saved in the `results/` directory, including:
 Run tests with pytest:
 
 ```bash
-pytest tests/
+export PYTHONPATH=$PYTHONPATH:$(pwd)/src
+python -m pytest tests/
 ```
 
 ## License
