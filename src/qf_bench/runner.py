@@ -1,5 +1,7 @@
 import logging
 import os
+import time
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Union
@@ -15,6 +17,20 @@ from .metrics.statistics import compare_models
 from .models.base import FoldingModel
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class BenchmarkResult:
+    target_id: str
+    dataset: str
+    model: str
+    rmsd: float
+    tm_score: float
+    plddt: float
+    gdt_ts: Optional[float] = None
+    execution_time: float = 0.0
+    timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
+    error: Optional[str] = None
 
 
 class BenchmarkRunner:
@@ -44,7 +60,11 @@ class BenchmarkRunner:
         self.last_statistical_report = pd.DataFrame()
 
     def run_benchmark(
-        self, dataset_name: str, targets: List[Dict[str, str]], max_workers: int = 4
+        self,
+        dataset_name: str,
+        targets: List[Dict[str, str]],
+        max_workers: int = 4,
+        baseline_model: Optional[str] = None,
     ) -> pd.DataFrame:
         """
         Runs the benchmark suite on a specific dataset using parallel execution.
@@ -53,6 +73,7 @@ class BenchmarkRunner:
             dataset_name: Name of the dataset (e.g., "CASP15").
             targets: List of target dictionaries with 'id' and 'sequence'.
             max_workers: Maximum number of threads for parallel execution.
+            baseline_model: Optional name of the model to use as baseline for stats.
 
         Returns:
             pd.DataFrame: DataFrame containing the benchmarking results.
@@ -62,7 +83,9 @@ class BenchmarkRunner:
             f"Starting benchmark for dataset: {dataset_name} ({len(targets)} targets)"
         )
 
-        def process_target_model(target: Dict[str, str], model: FoldingModel):
+        def process_target_model(
+            target: Dict[str, str], model: FoldingModel
+        ) -> BenchmarkResult:
             target_id = target["id"]
             sequence = target["sequence"]
 
@@ -71,22 +94,40 @@ class BenchmarkRunner:
                     target_id, sequence=sequence
                 )
             except Exception as e:
-                return f"Failed to obtain ground truth for {target_id}: {e}"
+                return BenchmarkResult(
+                    target_id=target_id,
+                    dataset=dataset_name,
+                    model=model.name,
+                    rmsd=float("nan"),
+                    tm_score=0.0,
+                    plddt=0.0,
+                    error=f"Ground truth failure: {e}",
+                )
 
             pred_path = self.output_dir / f"{target_id}_{model.name}.pdb"
+            start_time = time.time()
             try:
                 model.predict(sequence, str(pred_path))
+                exec_time = time.time() - start_time
                 metrics = calculate_metrics(ground_truth_path, str(pred_path))
 
-                return {
-                    "target_id": target_id,
-                    "dataset": dataset_name,
-                    "model": model.name,
-                    "timestamp": datetime.now().isoformat(),
+                return BenchmarkResult(
+                    target_id=target_id,
+                    dataset=dataset_name,
+                    model=model.name,
+                    execution_time=exec_time,
                     **metrics,
-                }
+                )
             except Exception as e:
-                return f"Error running {model.name} on {target_id}: {e}"
+                return BenchmarkResult(
+                    target_id=target_id,
+                    dataset=dataset_name,
+                    model=model.name,
+                    rmsd=float("nan"),
+                    tm_score=0.0,
+                    plddt=0.0,
+                    error=str(e),
+                )
 
         tasks = []
         for target in targets:
@@ -104,10 +145,9 @@ class BenchmarkRunner:
                 desc=f"Dataset: {dataset_name}",
             ):
                 res = future.result()
-                if isinstance(res, dict):
-                    results.append(res)
-                else:
-                    logger.error(res)
+                if res.error:
+                    logger.error(f"Error on {res.target_id}/{res.model}: {res.error}")
+                results.append(asdict(res))
 
         if not results:
             logger.warning(f"No results generated for dataset: {dataset_name}")
@@ -120,12 +160,16 @@ class BenchmarkRunner:
         if "gdt_ts" in df.columns:
             metrics_to_show.append("gdt_ts")
 
-        summary = df.groupby("model")[metrics_to_show].mean().reset_index()
+        summary = (
+            df.groupby("model")[metrics_to_show + ["execution_time"]]
+            .mean()
+            .reset_index()
+        )
         logger.info(
             f"\nSummary for {dataset_name}:\n{tabulate(summary, headers='keys', tablefmt='pretty', showindex=False)}"
         )
 
-        baseline = self.models[0].name if self.models else None
+        baseline = baseline_model or (self.models[0].name if self.models else None)
         if baseline and len(df["model"].unique()) > 1:
             self.last_statistical_report = compare_models(
                 df, baseline_model=baseline, metrics=metrics_to_show
