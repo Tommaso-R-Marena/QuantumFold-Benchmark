@@ -1,39 +1,35 @@
-import pytest
-import os
 from qf_bench.data.loader import BenchmarkDataLoader
-from qf_bench.models.quantum import QuantumFoldAdvantage
-from qf_bench.runner import BenchmarkRunner
 from qf_bench.metrics.scoring import calculate_rmsd
+from qf_bench.models.quantum import QuantumFoldAdvantage
 
-def test_data_loader():
-    loader = BenchmarkDataLoader(cache_dir="tests/cache")
+
+def test_data_loader(tmp_path):
+    loader = BenchmarkDataLoader(cache_dir=tmp_path / "cache")
     targets = loader.get_casp15_targets()
     assert len(targets) > 0
     assert "sequence" in targets[0]
 
-def test_quantum_model():
+
+def test_quantum_model(tmp_path):
     model = QuantumFoldAdvantage()
-    output_path = "tests/test_pred.pdb"
-    model.predict("MAAHKGAEHHHK", output_path)
-    assert os.path.exists(output_path)
-    os.remove(output_path)
+    output_path = tmp_path / "test_pred.pdb"
+    model.predict("MAAHKGAEHHHK", str(output_path))
+    assert output_path.exists()
 
-def test_metrics():
+
+def test_metrics(tmp_path):
     # Create two dummy PDBs
-    path1 = "tests/dummy1.pdb"
-    path2 = "tests/dummy2.pdb"
+    path1 = tmp_path / "dummy1.pdb"
+    path2 = tmp_path / "dummy2.pdb"
 
-    with open(path1, "w") as f:
-        f.write("ATOM      1  CA  ALA A   1       0.000   0.000   0.000  1.00  0.00           C\n")
-        f.write("END\n")
+    path1.write_text(
+        "ATOM      1  CA  ALA A   1       0.000   0.000   0.000  1.00  0.00           C\nEND\n"
+    )
+    path2.write_text(
+        "ATOM      1  CA  ALA A   1       1.000   0.000   0.000  1.00  0.00           C\nEND\n"
+    )
 
-    with open(path2, "w") as f:
-        f.write("ATOM      1  CA  ALA A   1       1.000   0.000   0.000  1.00  0.00           C\n")
-        f.write("END\n")
-
-    rmsd = calculate_rmsd(path1, path2)
+    rmsd = calculate_rmsd(str(path1), str(path2))
     # Since there's only one atom, and they are 1.0 apart, but superimposer might center them
     # Actually Superimposer with 1 atom will result in 0 RMSD after alignment.
     assert rmsd >= 0
-    os.remove(path1)
-    os.remove(path2)

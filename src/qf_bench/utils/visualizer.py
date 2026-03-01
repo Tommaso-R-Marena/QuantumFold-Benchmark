@@ -1,9 +1,12 @@
-import matplotlib.pyplot as plt
-import seaborn as sns
-import pandas as pd
 import os
+from pathlib import Path
 
-def plot_benchmark_results(df: pd.DataFrame, output_dir: str):
+import matplotlib.pyplot as plt
+import pandas as pd
+import seaborn as sns
+
+
+def plot_benchmark_results(df: pd.DataFrame, output_dir: str | Path):
     """
     Generate plots for benchmark results.
 
@@ -11,39 +14,63 @@ def plot_benchmark_results(df: pd.DataFrame, output_dir: str):
         df: DataFrame containing benchmark results.
         output_dir: Directory to save plots.
     """
-    os.makedirs(output_dir, exist_ok=True)
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
     sns.set_theme(style="whitegrid")
 
     # 1. RMSD Boxplot with Swarm
     plt.figure(figsize=(12, 6))
-    sns.boxplot(data=df, x='dataset', y='rmsd', hue='model')
-    sns.stripplot(data=df, x='dataset', y='rmsd', hue='model', dodge=True, alpha=0.5, color="black")
-    plt.title('RMSD Comparison across Datasets')
-    plt.ylabel('RMSD (Å)')
-    plt.xlabel('Dataset')
-    plt.savefig(os.path.join(output_dir, 'rmsd_comparison.png'))
+    sns.boxplot(data=df, x="dataset", y="rmsd", hue="model")
+    sns.stripplot(
+        data=df, x="dataset", y="rmsd", hue="model", dodge=True, alpha=0.5, palette="dark:black"
+    )
+    plt.title("RMSD Comparison across Datasets")
+    plt.ylabel("RMSD (Å)")
+    plt.xlabel("Dataset")
+    plt.savefig(output_dir / "rmsd_comparison.png")
     plt.close()
 
     # 2. TM-score Boxplot with Swarm
     plt.figure(figsize=(12, 6))
-    sns.boxplot(data=df, x='dataset', y='tm_score', hue='model')
-    sns.stripplot(data=df, x='dataset', y='tm_score', hue='model', dodge=True, alpha=0.5, color="black")
-    plt.title('TM-score Comparison across Datasets')
-    plt.ylabel('TM-score')
-    plt.xlabel('Dataset')
-    plt.savefig(os.path.join(output_dir, 'tm_score_comparison.png'))
+    sns.boxplot(data=df, x="dataset", y="tm_score", hue="model")
+    sns.stripplot(
+        data=df, x="dataset", y="tm_score", hue="model", dodge=True, alpha=0.5, palette="dark:black"
+    )
+    plt.title("TM-score Comparison across Datasets")
+    plt.ylabel("TM-score")
+    plt.xlabel("Dataset")
+    plt.savefig(output_dir / "tm_score_comparison.png")
     plt.close()
 
-    # 3. pLDDT Comparison
+    # 3. GDT-TS Comparison
+    if "gdt_ts" in df.columns:
+        plt.figure(figsize=(12, 6))
+        sns.boxplot(data=df, x="dataset", y="gdt_ts", hue="model")
+        plt.title("GDT-TS Comparison across Datasets")
+        plt.ylabel("GDT-TS")
+        plt.xlabel("Dataset")
+        plt.savefig(output_dir / "gdt_ts_comparison.png")
+        plt.close()
+
+    # 4. pLDDT Comparison
     plt.figure(figsize=(12, 6))
-    sns.barplot(data=df, x='dataset', y='plddt', hue='model', errorbar='sd')
-    plt.title('Average pLDDT Confidence by Model (with Std Dev)')
-    plt.ylabel('pLDDT')
-    plt.xlabel('Dataset')
-    plt.savefig(os.path.join(output_dir, 'plddt_comparison.png'))
+    sns.barplot(data=df, x="dataset", y="plddt", hue="model", errorbar="sd")
+    plt.title("Average pLDDT Confidence by Model (with Std Dev)")
+    plt.ylabel("pLDDT")
+    plt.xlabel("Dataset")
+    plt.savefig(output_dir / "plddt_comparison.png")
     plt.close()
 
-def generate_markdown_report(df: pd.DataFrame, output_path: str):
+    # 5. pLDDT Distribution
+    plt.figure(figsize=(12, 6))
+    sns.histplot(data=df, x="plddt", hue="model", kde=True, element="step")
+    plt.title("pLDDT Score Distribution")
+    plt.xlabel("pLDDT")
+    plt.savefig(output_dir / "plddt_distribution.png")
+    plt.close()
+
+
+def generate_markdown_report(df: pd.DataFrame, output_path: str | Path):
     """
     Generate a markdown report from benchmark results.
 
@@ -51,21 +78,35 @@ def generate_markdown_report(df: pd.DataFrame, output_path: str):
         df: DataFrame containing benchmark results.
         output_path: Path to save the markdown report.
     """
-    summary = df.groupby(['dataset', 'model'])[['rmsd', 'tm_score', 'plddt']].agg(['mean', 'median', 'std']).reset_index()
-    # Flatten multi-index columns
-    summary.columns = [f"{col[0]}_{col[1]}" if col[1] else col[0] for col in summary.columns]
+    metrics = ["rmsd", "tm_score", "plddt"]
+    if "gdt_ts" in df.columns:
+        metrics.append("gdt_ts")
 
-    with open(output_path, 'w') as f:
+    summary = (
+        df.groupby(["dataset", "model"])[metrics]
+        .agg(["mean", "median", "std"])
+        .reset_index()
+    )
+    # Flatten multi-index columns
+    summary.columns = [
+        f"{col[0]}_{col[1]}" if col[1] else col[0] for col in summary.columns
+    ]
+
+    output_path = Path(output_path)
+    with open(output_path, "w") as f:
         f.write("# QuantumFold-Advantage Benchmark Report\n\n")
         f.write("## Executive Summary\n")
-        f.write("This report presents a rigorous comparison of the hybrid quantum-classical folding model, **QuantumFold-Advantage**, against industry standards **AlphaFold3** and **Boltz2**.\n\n")
+        f.write(
+            "This report presents a rigorous comparison of the hybrid quantum-classical folding model, **QuantumFold-Advantage**, against industry standards **AlphaFold3** and **Boltz2**.\n\n"
+        )
 
         f.write("## Mean Performance Metrics\n\n")
         f.write(summary.to_markdown(index=False))
         f.write("\n\n")
 
         f.write("## Detailed Results per Target\n\n")
-        detailed = df[['dataset', 'target_id', 'model', 'rmsd', 'tm_score', 'plddt']].sort_values(['dataset', 'target_id'])
+        display_cols = ["dataset", "target_id", "model"] + metrics
+        detailed = df[display_cols].sort_values(["dataset", "target_id"])
         f.write(detailed.to_markdown(index=False))
         f.write("\n\n")
 
@@ -74,10 +115,17 @@ def generate_markdown_report(df: pd.DataFrame, output_path: str):
         f.write("![RMSD Comparison](rmsd_comparison.png)\n\n")
         f.write("### TM-score Comparison\n")
         f.write("![TM-score Comparison](tm_score_comparison.png)\n\n")
+
+        if "gdt_ts" in df.columns:
+            f.write("### GDT-TS Comparison\n")
+            f.write("![GDT-TS Comparison](gdt_ts_comparison.png)\n\n")
+
         f.write("### pLDDT Confidence\n")
         f.write("![pLDDT Comparison](plddt_comparison.png)\n\n")
+        f.write("### pLDDT Distribution\n")
+        f.write("![pLDDT Distribution](plddt_distribution.png)\n\n")
 
         f.write("## Methodology\n")
         f.write("- **Datasets**: CASP15, Miniproteins, and IDRs.\n")
-        f.write("- **Metrics**: RMSD, TM-score, and pLDDT.\n")
+        f.write("- **Metrics**: RMSD, TM-score, GDT-TS, and pLDDT.\n")
         f.write("- **Quantum Engine**: Simulated VQE using Qiskit Aer.\n")
