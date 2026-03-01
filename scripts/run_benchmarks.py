@@ -21,6 +21,8 @@ def main():
                         default=["casp15", "miniproteins", "idrs"], help="Datasets to run")
     parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility")
     parser.add_argument("--verbose", action="store_true", help="Enable verbose logging")
+    parser.add_argument("--max-workers", type=int, default=4, help="Maximum number of worker threads")
+    parser.add_argument("--baseline", type=str, default=None, help="Model name to use as baseline for stats")
 
     args = parser.parse_args()
 
@@ -40,23 +42,21 @@ def main():
 
     all_results = []
 
-    if "casp15" in args.datasets:
-        logger.info("Running CASP15 Benchmark...")
-        casp15_targets = loader.get_casp15_targets()
-        res_casp = runner.run_benchmark("CASP15", casp15_targets)
-        all_results.append(res_casp)
+    dataset_map = {
+        "casp15": ("CASP15", loader.get_casp15_targets),
+        "miniproteins": ("Miniproteins", loader.get_miniproteins),
+        "idrs": ("IDRs", loader.get_idrs),
+    }
 
-    if "miniproteins" in args.datasets:
-        logger.info("Running Miniproteins Benchmark...")
-        mini_targets = loader.get_miniproteins()
-        res_mini = runner.run_benchmark("Miniproteins", mini_targets)
-        all_results.append(res_mini)
-
-    if "idrs" in args.datasets:
-        logger.info("Running IDR Benchmark...")
-        idr_targets = loader.get_idrs()
-        res_idr = runner.run_benchmark("IDRs", idr_targets)
-        all_results.append(res_idr)
+    for ds_key in args.datasets:
+        name, fetcher = dataset_map[ds_key]
+        logger.info(f"Running {name} Benchmark...")
+        targets = fetcher()
+        if targets:
+            res = runner.run_benchmark(
+                name, targets, max_workers=args.max_workers, baseline_model=args.baseline
+            )
+            all_results.append(res)
 
     if not all_results:
         logger.warning("No datasets selected to run.")
@@ -72,7 +72,11 @@ def main():
 
     # Generate Report
     logger.info("Generating markdown report...")
-    generate_markdown_report(final_df, os.path.join(args.output_dir, "report.md"))
+    generate_markdown_report(
+        final_df,
+        os.path.join(args.output_dir, "report.md"),
+        statistical_report=runner.last_statistical_report,
+    )
 
     logger.info(f"Benchmark Suite execution complete. See {args.output_dir}/ directory for details.")
 
