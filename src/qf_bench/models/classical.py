@@ -4,13 +4,12 @@ from typing import Optional
 
 import numpy as np
 
-from ..utils.pdb_utils import save_to_pdb
-from .base import FoldingModel
+from .base import FoldingModel, SimulationMixin
 
 logger = logging.getLogger(__name__)
 
 
-class AlphaFold3Wrapper(FoldingModel):
+class AlphaFold3Wrapper(FoldingModel, SimulationMixin):
     """
     Production-ready wrapper for AlphaFold3 API.
     Integrates with the AlphaFold3 server or local inference engine.
@@ -62,33 +61,20 @@ class AlphaFold3Wrapper(FoldingModel):
         return output_path
 
     def _simulate_af3_prediction(self, sequence: str, output_path: str) -> None:
-        """High-fidelity simulation of AF3 output (random walk with persistence)."""
-        coords = []
-        plddts = []
-        pos = np.array([0.0, 0.0, 0.0])
-        direction = np.array([1.0, 0, 0])
-
-        for i in range(len(sequence)):
-            # Update direction with minimal jitter (AF3 is precise)
-            change = self.rng.normal(0, 0.1, 3)
-            direction = direction + change
-            direction /= np.linalg.norm(direction)
-
-            pos = pos + direction * 3.8
-            coords.append(pos.copy())
-            # AF3 usually has high confidence
-            plddts.append(94.0 + self.rng.uniform(-2, 4))
-
-        save_to_pdb(
+        """High-fidelity simulation of AF3 output."""
+        self._simulate_fold(
             sequence,
-            np.array(coords),
             output_path,
             pdb_id="af3",
-            plddts=np.array(plddts),
+            rng=self.rng,
+            persistence=0.95,
+            jitter_scale=0.05,
+            plddt_base=95.0,
+            plddt_range=(-2, 4),
         )
 
 
-class Boltz2Wrapper(FoldingModel):
+class Boltz2Wrapper(FoldingModel, SimulationMixin):
     """
     Wrapper for Boltz-2 (MIT Jameel Clinic).
     Handles both local binary execution and simulation fallbacks.
@@ -118,26 +104,14 @@ class Boltz2Wrapper(FoldingModel):
 
     def _simulate_boltz2_prediction(self, sequence: str, output_path: str) -> None:
         """Simulation of Boltz2 output."""
-        coords = []
-        plddts = []
-        pos = np.array([0.0, 0.0, 0.0])
-        direction = np.array([1.0, 0.5, 0])
-        direction /= np.linalg.norm(direction)
-
-        for i in range(len(sequence)):
-            # Boltz2 simulation with slightly more jitter than AF3
-            change = self.rng.normal(0, 0.3, 3)
-            direction = direction + change
-            direction /= np.linalg.norm(direction)
-
-            pos = pos + direction * 3.8
-            coords.append(pos.copy())
-            plddts.append(88.0 + self.rng.uniform(-8, 8))
-
-        save_to_pdb(
+        self._simulate_fold(
             sequence,
-            np.array(coords),
             output_path,
             pdb_id="boltz2",
-            plddts=np.array(plddts),
+            rng=self.rng,
+            persistence=0.85,
+            jitter_scale=0.15,
+            plddt_base=88.0,
+            plddt_range=(-8, 8),
+            bias_direction=np.array([1.0, 0.5, 0.0]),
         )

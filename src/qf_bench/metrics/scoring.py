@@ -1,4 +1,5 @@
 import logging
+import os
 from typing import Dict, List, Tuple
 
 import numpy as np
@@ -9,23 +10,36 @@ from Bio.PDB.Structure import Structure
 logger = logging.getLogger(__name__)
 
 
-def _get_ca_atoms_dict(structure: Structure) -> Dict[Tuple, Atom]:
+def _get_ca_atoms_dict(structure: Structure) -> Dict[Tuple[str, int], Atom]:
     """
     Helper to extract CA atoms with (chain_id, res_id) as keys.
-    Handles altloc by picking the primary one (often ' ' or 'A').
+    Handles altloc by picking the primary one.
+    Only considers the first model if multiple models are present.
     """
     ca_atoms = {}
-    for model in structure:
-        for chain in model:
-            chain_id = chain.get_id()
-            for residue in chain:
-                if "CA" in residue:
-                    ca_atom = residue["CA"]
-                    # If multiple locations exist, pick the first one
-                    if ca_atom.is_disordered():
+    # Use only the first model
+    try:
+        model = structure[0]
+    except (IndexError, KeyError):
+        return {}
+
+    for chain in model:
+        chain_id = chain.get_id()
+        for residue in chain:
+            # Check if it's a standard amino acid residue
+            if residue.get_id()[0] != " ":  # Skip hetero-atoms
+                continue
+            if "CA" in residue:
+                ca_atom = residue["CA"]
+                # If multiple locations exist, pick the first one
+                if ca_atom.is_disordered():
+                    try:
                         ca_atom = ca_atom.disordered_get()
-                    res_id = residue.get_id()
-                    ca_atoms[(chain_id, res_id)] = ca_atom
+                    except Exception:
+                        # Fallback to choosing one from the disordered atom
+                        ca_atom = list(ca_atom.child_dict.values())[0]
+                res_id = residue.get_id()[1]
+                ca_atoms[(chain_id, res_id)] = ca_atom
     return ca_atoms
 
 
@@ -38,6 +52,13 @@ def get_common_ca_atoms(
     """
     parser = PDBParser(QUIET=True)
     try:
+        if not os.path.exists(ref_pdb):
+            logger.error(f"Reference PDB file not found: {ref_pdb}")
+            return [], []
+        if not os.path.exists(target_pdb):
+            logger.error(f"Target PDB file not found: {target_pdb}")
+            return [], []
+
         ref_struct = parser.get_structure("ref", ref_pdb)
         target_struct = parser.get_structure("target", target_pdb)
     except Exception as e:
@@ -50,7 +71,10 @@ def get_common_ca_atoms(
     common_keys = sorted(set(ref_ca.keys()) & set(target_ca.keys()))
 
     if not common_keys:
-        logger.warning(f"No common CA atoms found between {ref_pdb} and {target_pdb}")
+        logger.warning(
+            f"No common CA atoms found between {ref_pdb} and {target_pdb}. "
+            f"Ref keys: {len(ref_ca)}, Target keys: {len(target_ca)}"
+        )
         return [], []
 
     if len(common_keys) != len(ref_ca) or len(common_keys) != len(target_ca):
@@ -66,14 +90,14 @@ def get_common_ca_atoms(
 
 def calculate_rmsd(ref_pdb: str, target_pdb: str) -> float:
     """
-    Calculates RMSD between two PDB files using matched CA atoms.
+    Calculates Root Mean Square Deviation (RMSD) between two PDB files using matched CA atoms.
 
     Args:
-        ref_pdb: Path to the reference PDB file.
-        target_pdb: Path to the predicted PDB file.
+        ref_pdb (str): Path to the reference PDB file.
+        target_pdb (str): Path to the predicted PDB file.
 
     Returns:
-        float: The RMSD value.
+        float: The RMSD value in Angstroms. Returns NaN if no common CA atoms are found.
     """
     ref_atoms, target_atoms = get_common_ca_atoms(ref_pdb, target_pdb)
 
@@ -85,9 +109,70 @@ def calculate_rmsd(ref_pdb: str, target_pdb: str) -> float:
     return superimposer.rms
 
 
+def _iterative_superimposition(
+    ref_atoms: List[Atom], target_atoms: List[Atom], max_iterations: int = 10
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Performs iterative superimposition to find a robust alignment,
+    similar to how TM-score and GDT-TS are calculated in standard tools.
+    """
+    ref_coords = np.array([a.get_coord() for a in ref_atoms])
+    target_coords = np.array([a.get_coord() for a in target_atoms])
+
+    best_tm = -1.0
+    best_target_coords = target_coords.copy()
+    best_distances = np.zeros(len(ref_coords))
+
+    L = len(ref_coords)
+    d0 = 1.24 * (max(L, 15) - 15) ** (1 / 3) - 1.8
+    if d0 <= 0.5:
+        d0 = 0.5
+
+    # Initial superimposition using all atoms
+    si = Superimposer()
+    current_target_atoms = [Atom(a.name, a.coord, a.bfactor, a.occupancy, a.altloc, a.fullname, a.serial_number, a.element) for a in target_atoms]
+
+    for iteration in range(max_iterations):
+        # Update coordinates in temporary atoms for superimposer
+        for i, coord in enumerate(target_coords):
+            current_target_atoms[i].set_coord(coord)
+
+        si.set_atoms(ref_atoms, current_target_atoms)
+        si.apply(current_target_atoms)
+
+        aligned_target_coords = np.array([a.get_coord() for a in current_target_atoms])
+        distances = np.linalg.norm(ref_coords - aligned_target_coords, axis=1)
+
+        tm_score = np.sum(1.0 / (1.0 + (distances / d0) ** 2)) / L
+
+        if tm_score > best_tm:
+            best_tm = tm_score
+            best_target_coords = aligned_target_coords.copy()
+            best_distances = distances.copy()
+
+        # Identify residues within a certain distance for the next alignment round
+        # For TM-score alignment, we typically use residues where distance < d0 or a similar heuristic
+        mask = distances < max(d0, 2.0)
+        if np.sum(mask) < 3: # Need at least 3 points for 3D alignment
+            break
+
+        # Filter atoms for next iteration's alignment
+        subset_ref = [ref_atoms[i] for i, m in enumerate(mask) if m]
+        subset_target = [target_atoms[i] for i, m in enumerate(mask) if m]
+
+        # In a real TM-align, we would re-superimpose based on this subset
+        si.set_atoms(subset_ref, subset_target)
+        # Note: si.apply doesn't work on the original target_atoms here easily
+        # so we just get the rotation/translation and apply manually
+        rot, tran = si.rotran
+        target_coords = np.dot(np.array([a.get_coord() for a in target_atoms]), rot) + tran
+
+    return best_target_coords, best_distances, best_tm
+
+
 def calculate_tm_score(ref_pdb: str, target_pdb: str) -> float:
     """
-    Calculates an approximate TM-score between two PDB files using matched CA atoms.
+    Calculates a robust TM-score between two PDB files using iterative CA alignment.
 
     Args:
         ref_pdb: Path to the reference PDB file.
@@ -101,50 +186,23 @@ def calculate_tm_score(ref_pdb: str, target_pdb: str) -> float:
     if not ref_atoms:
         return 0.0
 
-    # Superimpose using Bio.PDB.Superimposer (uses Kabsch algorithm internally)
-    superimposer = Superimposer()
-    superimposer.set_atoms(ref_atoms, target_atoms)
-    superimposer.apply(target_atoms)
-
-    ref_coords = np.array([a.get_coord() for a in ref_atoms])
-    target_coords = np.array([a.get_coord() for a in target_atoms])
-
-    distances = np.linalg.norm(ref_coords - target_coords, axis=1)
-
-    # TM-score formula: 1/L_target * sum(1 / (1 + (d_i/d0)^2))
-    L_target = len(ref_atoms)
-    if L_target == 0:
-        return 0.0
-
-    d0 = 1.24 * (max(L_target, 15) - 15) ** (1 / 3) - 1.8
-    if d0 <= 0.5:
-        d0 = 0.5
-
-    tm_score = np.sum(1.0 / (1.0 + (distances / d0) ** 2)) / L_target
+    _, _, tm_score = _iterative_superimposition(ref_atoms, target_atoms)
     return float(tm_score)
 
 
 def calculate_gdt_ts(ref_pdb: str, target_pdb: str) -> float:
     """
-    Calculates approximate GDT-TS (Global Distance Test - Total Score).
+    Calculates robust GDT-TS (Global Distance Test - Total Score).
     GDT-TS = (GDT_1 + GDT_2 + GDT_4 + GDT_8) / 4, where GDT_P is the percentage
-    of residues under P Angstroms after superimposition.
-
-    Note: This implementation uses a single global superimposition for simplicity,
-    whereas a full GDT-TS might try multiple alignments.
+    of residues under P Angstroms after robust superimposition.
     """
     ref_atoms, target_atoms = get_common_ca_atoms(ref_pdb, target_pdb)
 
     if not ref_atoms:
         return 0.0
 
-    superimposer = Superimposer()
-    superimposer.set_atoms(ref_atoms, target_atoms)
-    superimposer.apply(target_atoms)
-
-    ref_coords = np.array([a.get_coord() for a in ref_atoms])
-    target_coords = np.array([a.get_coord() for a in target_atoms])
-    distances = np.linalg.norm(ref_coords - target_coords, axis=1)
+    # For GDT-TS, we use the distances from a robust iterative alignment
+    _, distances, _ = _iterative_superimposition(ref_atoms, target_atoms)
 
     thresholds = [1.0, 2.0, 4.0, 8.0]
     percentages = []
@@ -159,10 +217,10 @@ def calculate_plddt(pdb_path: str) -> float:
     Extracts average pLDDT from the B-factor column of CA atoms in a PDB file.
 
     Args:
-        pdb_path: Path to the PDB file.
+        pdb_path (str): Path to the PDB file.
 
     Returns:
-        float: Average pLDDT value.
+        float: Average pLDDT value (0 to 100).
     """
     parser = PDBParser(QUIET=True)
     try:

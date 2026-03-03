@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+from typing import Optional
 
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -54,11 +55,20 @@ def plot_benchmark_results(df: pd.DataFrame, output_dir: str | Path):
 
     # 4. pLDDT Comparison
     plt.figure(figsize=(12, 6))
-    sns.barplot(data=df, x="dataset", y="plddt", hue="model", errorbar="sd")
+    sns.barplot(data=df, x="dataset", y="plddt", hue="model", errorbar="sd", palette="viridis")
     plt.title("Average pLDDT Confidence by Model (with Std Dev)")
     plt.ylabel("pLDDT")
     plt.xlabel("Dataset")
-    plt.savefig(output_dir / "plddt_comparison.png")
+    plt.savefig(output_dir / "plddt_comparison.png", dpi=300)
+    plt.close()
+
+    # 6. Execution Time Comparison
+    plt.figure(figsize=(12, 6))
+    sns.barplot(data=df, x="dataset", y="execution_time", hue="model", palette="magma")
+    plt.title("Average Execution Time by Model")
+    plt.ylabel("Time (seconds)")
+    plt.xlabel("Dataset")
+    plt.savefig(output_dir / "execution_time_comparison.png", dpi=300)
     plt.close()
 
     # 5. pLDDT Distribution
@@ -70,21 +80,26 @@ def plot_benchmark_results(df: pd.DataFrame, output_dir: str | Path):
     plt.close()
 
 
-def generate_markdown_report(df: pd.DataFrame, output_path: str | Path):
+def generate_markdown_report(
+    df: pd.DataFrame,
+    output_path: str | Path,
+    statistical_report: Optional[pd.DataFrame] = None,
+):
     """
     Generate a markdown report from benchmark results.
 
     Args:
         df: DataFrame containing benchmark results.
         output_path: Path to save the markdown report.
+        statistical_report: Optional DataFrame containing paired statistical tests.
     """
     metrics = ["rmsd", "tm_score", "plddt"]
     if "gdt_ts" in df.columns:
         metrics.append("gdt_ts")
 
     summary = (
-        df.groupby(["dataset", "model"])[metrics]
-        .agg(["mean", "median", "std"])
+        df.groupby(["dataset", "model"])[metrics + ["execution_time"]]
+        .agg(["mean", "std"])
         .reset_index()
     )
     # Flatten multi-index columns
@@ -95,6 +110,8 @@ def generate_markdown_report(df: pd.DataFrame, output_path: str | Path):
     output_path = Path(output_path)
     with open(output_path, "w") as f:
         f.write("# QuantumFold-Advantage Benchmark Report\n\n")
+        f.write(f"**Date:** {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+
         f.write("## Executive Summary\n")
         f.write(
             "This report presents a rigorous comparison of the hybrid quantum-classical folding model, **QuantumFold-Advantage**, against industry standards **AlphaFold3** and **Boltz2**.\n\n"
@@ -104,8 +121,16 @@ def generate_markdown_report(df: pd.DataFrame, output_path: str | Path):
         f.write(summary.to_markdown(index=False))
         f.write("\n\n")
 
+        if statistical_report is not None and not statistical_report.empty:
+            f.write("## Statistical Comparison vs Baseline\n\n")
+            f.write(
+                "Paired statistical tests (Wilcoxon) and effect size (Cohen's d) estimation.\n\n"
+            )
+            f.write(statistical_report.to_markdown(index=False))
+            f.write("\n\n")
+
         f.write("## Detailed Results per Target\n\n")
-        display_cols = ["dataset", "target_id", "model"] + metrics
+        display_cols = ["dataset", "target_id", "model"] + metrics + ["execution_time"]
         detailed = df[display_cols].sort_values(["dataset", "target_id"])
         f.write(detailed.to_markdown(index=False))
         f.write("\n\n")

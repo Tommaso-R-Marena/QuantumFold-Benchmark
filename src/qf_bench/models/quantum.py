@@ -6,15 +6,14 @@ from qiskit import QuantumCircuit
 from qiskit_aer import AerSimulator
 from scipy.optimize import minimize
 
-from ..utils.pdb_utils import save_to_pdb
-from .base import FoldingModel
+from .base import FoldingModel, SimulationMixin
 
 logger = logging.getLogger(__name__)
 
 HYDROPHOBIC = set("AILMFWVPG")
 
 
-class QuantumFoldAdvantage(FoldingModel):
+class QuantumFoldAdvantage(FoldingModel, SimulationMixin):
     """Hybrid quantum-classical folding model with a toy but iterative VQE loop."""
 
     def __init__(
@@ -197,50 +196,24 @@ class QuantumFoldAdvantage(FoldingModel):
         Translates the quantum bitstring into a 3D structure.
         Uses a random walk with bias based on the bitstring.
         """
-        pos = np.array([0.0, 0.0, 0.0], dtype="f")
-        # Standard bond length ~3.8A
-        bond_length = 3.8
+        # Map bitstring to a bias direction
+        # Simple mapping: sum of components based on bits
+        bias = np.zeros(3)
+        for i, bit in enumerate(bitstring):
+            axis = i % 3
+            bias[axis] += 1 if bit == "1" else -1
 
-        # Directions for a simple cubic lattice walk
-        directions = [
-            np.array([1, 0, 0]), np.array([-1, 0, 0]),
-            np.array([0, 1, 0]), np.array([0, -1, 0]),
-            np.array([0, 0, 1]), np.array([0, 0, -1])
-        ]
+        if np.linalg.norm(bias) < 1e-6:
+            bias = np.array([1.0, 0.0, 0.0])
 
-        coords = []
-        plddts = []
-
-        # We'll use a slightly more sophisticated walk to avoid trivial linear structures
-        # even if it's still very much a toy.
-        for i in range(len(sequence)):
-            # Use bitstring to influence direction
-            bit_idx = (i * 3) % len(bitstring)
-            chunk = bitstring[bit_idx : bit_idx + 3]
-            if len(chunk) < 3:
-                chunk = (chunk + bitstring)[:3]
-
-            dir_idx = int(chunk, 2) % len(directions)
-            base_dir = directions[dir_idx]
-
-            # Add some persistence to the walk
-            if i > 0:
-                prev_dir = (coords[-1] - coords[-2]) if i > 1 else np.array([1.0, 0, 0])
-                prev_dir /= np.linalg.norm(prev_dir)
-                # Blend previous direction with new chosen direction
-                step_dir = 0.7 * prev_dir + 0.3 * base_dir
-                step_dir /= np.linalg.norm(step_dir)
-            else:
-                step_dir = base_dir
-
-            # Jitter to avoid exact lattice
-            jitter = self.rng.normal(0, 0.1, 3)
-            pos = pos + (step_dir * bond_length) + jitter
-
-            coords.append(pos.copy())
-
-            # Mock pLDDT: decays slightly with length, some noise
-            base_plddt = max(40.0, 85.0 - len(sequence) * 0.05)
-            plddts.append(base_plddt + self.rng.uniform(-10, 5))
-
-        save_to_pdb(sequence, np.array(coords), output_path, plddts=np.array(plddts))
+        self._simulate_fold(
+            sequence,
+            output_path,
+            pdb_id="quantum",
+            rng=self.rng,
+            persistence=0.7,
+            jitter_scale=0.2,
+            plddt_base=max(40.0, 85.0 - len(sequence) * 0.05),
+            plddt_range=(-10, 5),
+            bias_direction=bias,
+        )
