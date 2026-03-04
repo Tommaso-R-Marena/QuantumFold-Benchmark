@@ -116,58 +116,54 @@ def _iterative_superimposition(
     Performs iterative superimposition to find a robust alignment,
     similar to how TM-score and GDT-TS are calculated in standard tools.
     """
-    ref_coords = np.array([a.get_coord() for a in ref_atoms])
-    target_coords = np.array([a.get_coord() for a in target_atoms])
-
-    best_tm = -1.0
-    best_target_coords = target_coords.copy()
-    best_distances = np.zeros(len(ref_coords))
+    ref_coords = np.array([a.get_coord() for a in ref_atoms], dtype=np.float32)
+    original_target_coords = np.array([a.get_coord() for a in target_atoms], dtype=np.float32)
+    current_target_coords = original_target_coords.copy()
 
     L = len(ref_coords)
-    d0 = 1.24 * (max(L, 15) - 15) ** (1 / 3) - 1.8
-    if d0 <= 0.5:
-        d0 = 0.5
+    d0 = max(0.5, 1.24 * (max(L, 15) - 15) ** (1 / 3) - 1.8)
 
-    # Initial superimposition using all atoms
+    best_tm = -1.0
+    best_target_coords = current_target_coords.copy()
+    best_distances = np.zeros(L, dtype=np.float32)
+
     si = Superimposer()
-    current_target_atoms = [Atom(a.name, a.coord, a.bfactor, a.occupancy, a.altloc, a.fullname, a.serial_number, a.element) for a in target_atoms]
 
-    for iteration in range(max_iterations):
-        # Update coordinates in temporary atoms for superimposer
-        for i, coord in enumerate(target_coords):
-            current_target_atoms[i].set_coord(coord)
+    # Create fixed length list for atoms to avoid re-allocation
+    # Using the original atoms for reference as they don't change
+    for _ in range(max_iterations):
+        # We need a subset of atoms for the superimposer
+        # Initial iteration uses all atoms
+        if best_tm < 0:
+            si.set_atoms(ref_atoms, target_atoms)
+        else:
+            mask = distances < max(d0, 2.0)
+            if np.sum(mask) < 3:
+                break
+            subset_ref = [ref_atoms[i] for i, m in enumerate(mask) if m]
+            subset_target = [target_atoms[i] for i, m in enumerate(mask) if m]
+            si.set_atoms(subset_ref, subset_target)
 
-        si.set_atoms(ref_atoms, current_target_atoms)
-        si.apply(current_target_atoms)
+        rot, tran = si.rotran
+        # Vectorized apply: (N, 3) @ (3, 3) + (3,)
+        current_target_coords = np.dot(original_target_coords, rot) + tran
 
-        aligned_target_coords = np.array([a.get_coord() for a in current_target_atoms])
-        distances = np.linalg.norm(ref_coords - aligned_target_coords, axis=1)
+        # Vectorized distance calculation
+        diff = ref_coords - current_target_coords
+        distances = np.sqrt(np.sum(diff * diff, axis=1))
 
         tm_score = np.sum(1.0 / (1.0 + (distances / d0) ** 2)) / L
 
         if tm_score > best_tm:
             best_tm = tm_score
-            best_target_coords = aligned_target_coords.copy()
+            best_target_coords = current_target_coords.copy()
             best_distances = distances.copy()
+        else:
+            # If TM-score doesn't improve, we might be oscillating or converged
+            if best_tm > 0:
+                break
 
-        # Identify residues within a certain distance for the next alignment round
-        # For TM-score alignment, we typically use residues where distance < d0 or a similar heuristic
-        mask = distances < max(d0, 2.0)
-        if np.sum(mask) < 3: # Need at least 3 points for 3D alignment
-            break
-
-        # Filter atoms for next iteration's alignment
-        subset_ref = [ref_atoms[i] for i, m in enumerate(mask) if m]
-        subset_target = [target_atoms[i] for i, m in enumerate(mask) if m]
-
-        # In a real TM-align, we would re-superimpose based on this subset
-        si.set_atoms(subset_ref, subset_target)
-        # Note: si.apply doesn't work on the original target_atoms here easily
-        # so we just get the rotation/translation and apply manually
-        rot, tran = si.rotran
-        target_coords = np.dot(np.array([a.get_coord() for a in target_atoms]), rot) + tran
-
-    return best_target_coords, best_distances, best_tm
+    return best_target_coords, best_distances, float(best_tm)
 
 
 def calculate_tm_score(ref_pdb: str, target_pdb: str) -> float:
@@ -225,19 +221,23 @@ def calculate_plddt(pdb_path: str) -> float:
     parser = PDBParser(QUIET=True)
     try:
         struct = parser.get_structure("struct", pdb_path)
+        # Only consider the first model for consistency
+        model = struct[0]
     except Exception as e:
         logger.error(f"Error parsing PDB for pLDDT: {e}")
         return 0.0
 
     bfactors = []
-    for model in struct:
-        for chain in model:
-            for residue in chain:
-                if "CA" in residue:
-                    ca_atom = residue["CA"]
-                    if ca_atom.is_disordered():
+    for chain in model:
+        for residue in chain:
+            if "CA" in residue:
+                ca_atom = residue["CA"]
+                if ca_atom.is_disordered():
+                    try:
                         ca_atom = ca_atom.disordered_get()
-                    bfactors.append(ca_atom.get_bfactor())
+                    except Exception:
+                        ca_atom = list(ca_atom.child_dict.values())[0]
+                bfactors.append(ca_atom.get_bfactor())
 
     if not bfactors:
         logger.warning(f"No CA atoms found in {pdb_path} for pLDDT calculation.")

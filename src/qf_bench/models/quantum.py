@@ -3,6 +3,7 @@ from typing import Dict, Optional, Tuple
 
 import numpy as np
 from qiskit import QuantumCircuit
+from qiskit.circuit import ParameterVector
 from qiskit_aer import AerSimulator
 from scipy.optimize import minimize
 
@@ -66,8 +67,8 @@ class QuantumFoldAdvantage(FoldingModel, SimulationMixin):
         n_qubits = min(max(len(sequence), 2), 16)
         hamiltonian = self._build_ising_hamiltonian(sequence, n_qubits)
 
-        best_params, best_energy = self._optimize_vqe(hamiltonian, n_qubits)
-        bitstring, resources = self._sample_best_bitstring(best_params, n_qubits)
+        best_params, best_energy, optimized_qc = self._optimize_vqe(hamiltonian, n_qubits)
+        bitstring, resources = self._sample_best_bitstring(optimized_qc)
 
         self.last_run_stats = {
             "energy": float(best_energy),
@@ -87,10 +88,12 @@ class QuantumFoldAdvantage(FoldingModel, SimulationMixin):
         )
         return output_path
 
-    def _build_ansatz(self, n_qubits: int, params: np.ndarray) -> QuantumCircuit:
+    def _get_ansatz(self, n_qubits: int, n_layers: int = 2) -> Tuple[QuantumCircuit, ParameterVector]:
+        """Creates a parameterized ansatz once to be reused."""
+        n_params = n_layers * 2 * n_qubits
+        params = ParameterVector("θ", n_params)
         qc = QuantumCircuit(n_qubits)
-        layer_size = 2 * n_qubits
-        n_layers = max(1, len(params) // layer_size)
+
         idx = 0
         for _ in range(n_layers):
             for q in range(n_qubits):
@@ -101,7 +104,7 @@ class QuantumFoldAdvantage(FoldingModel, SimulationMixin):
             for q in range(n_qubits):
                 qc.rz(params[idx], q)
                 idx += 1
-        return qc
+        return qc, params
 
     def _build_ising_hamiltonian(
         self, sequence: str, n_qubits: int
@@ -131,12 +134,16 @@ class QuantumFoldAdvantage(FoldingModel, SimulationMixin):
         return energy
 
     def _expected_energy(
-        self, params: np.ndarray, hamiltonian: Tuple[np.ndarray, np.ndarray], n_qubits: int
+        self,
+        params_values: np.ndarray,
+        ansatz_qc: QuantumCircuit,
+        ansatz_params: ParameterVector,
+        hamiltonian: Tuple[np.ndarray, np.ndarray]
     ) -> float:
-        qc = self._build_ansatz(n_qubits, params)
-        qc.measure_all()
+        bound_qc = ansatz_qc.assign_parameters({ansatz_params: params_values})
+        bound_qc.measure_all()
         result = self.simulator.run(
-            qc, shots=self.shots, seed_simulator=self.seed
+            bound_qc, shots=self.shots, seed_simulator=self.seed
         ).result()
         counts = result.get_counts()
         total = sum(counts.values())
@@ -149,13 +156,13 @@ class QuantumFoldAdvantage(FoldingModel, SimulationMixin):
 
     def _optimize_vqe(
         self, hamiltonian: Tuple[np.ndarray, np.ndarray], n_qubits: int
-    ) -> Tuple[np.ndarray, float]:
+    ) -> Tuple[np.ndarray, float, QuantumCircuit]:
         n_layers = 2
-        n_params = n_layers * 2 * n_qubits
-        initial = self.rng.uniform(0, 2 * np.pi, n_params)
+        ansatz_qc, ansatz_params = self._get_ansatz(n_qubits, n_layers)
+        initial = self.rng.uniform(0, 2 * np.pi, len(ansatz_params))
 
-        def objective(params: np.ndarray) -> float:
-            return self._expected_energy(params, hamiltonian, n_qubits)
+        def objective(params_values: np.ndarray) -> float:
+            return self._expected_energy(params_values, ansatz_qc, ansatz_params, hamiltonian)
 
         method = (
             "COBYLA"
@@ -171,22 +178,22 @@ class QuantumFoldAdvantage(FoldingModel, SimulationMixin):
         if not opt_result.success:
             logger.warning("VQE optimizer did not fully converge: %s", opt_result.message)
         self._last_optimizer_iterations = int(getattr(opt_result, "nit", self.maxiter))
-        return opt_result.x, float(opt_result.fun)
+        return opt_result.x, float(opt_result.fun), ansatz_qc.assign_parameters({ansatz_params: opt_result.x})
 
     def _sample_best_bitstring(
-        self, params: np.ndarray, n_qubits: int
+        self, optimized_qc: QuantumCircuit
     ) -> Tuple[str, Dict[str, int]]:
-        qc = self._build_ansatz(n_qubits, params)
-        qc.measure_all()
+        qc_measured = optimized_qc.copy()
+        qc_measured.measure_all()
         result = self.simulator.run(
-            qc, shots=self.shots, seed_simulator=self.seed
+            qc_measured, shots=self.shots, seed_simulator=self.seed
         ).result()
         counts = result.get_counts()
         bitstring = max(counts, key=counts.get)
         resources = {
-            "depth": int(qc.depth()),
-            "gate_count": int(sum(qc.count_ops().values())),
-            "nonlocal_gate_count": int(qc.num_nonlocal_gates()),
+            "depth": int(optimized_qc.depth()),
+            "gate_count": int(sum(optimized_qc.count_ops().values())),
+            "nonlocal_gate_count": int(optimized_qc.num_nonlocal_gates()),
             "iterations": int(getattr(self, "_last_optimizer_iterations", self.maxiter)),
         }
         return bitstring, resources
@@ -197,14 +204,24 @@ class QuantumFoldAdvantage(FoldingModel, SimulationMixin):
         Uses a random walk with bias based on the bitstring.
         """
         # Map bitstring to a bias direction
-        # Simple mapping: sum of components based on bits
+        # Each bit pair corresponds to a direction in the 2D plane, z is handled separately
         bias = np.zeros(3)
-        for i, bit in enumerate(bitstring):
-            axis = i % 3
-            bias[axis] += 1 if bit == "1" else -1
+        for i in range(0, len(bitstring) - 1, 2):
+            bits = bitstring[i:i+2]
+            if bits == "00":
+                bias += np.array([1.0, 0.0, 0.0])
+            elif bits == "01":
+                bias += np.array([-1.0, 0.0, 0.0])
+            elif bits == "10":
+                bias += np.array([0.0, 1.0, 0.1])
+            elif bits == "11":
+                bias += np.array([0.0, -1.0, -0.1])
 
         if np.linalg.norm(bias) < 1e-6:
             bias = np.array([1.0, 0.0, 0.0])
+
+        # Normalize bias
+        bias /= np.linalg.norm(bias)
 
         self._simulate_fold(
             sequence,

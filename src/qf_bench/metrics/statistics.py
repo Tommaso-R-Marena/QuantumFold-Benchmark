@@ -22,13 +22,14 @@ class PairedComparison:
     cohens_d: float
 
 
-def _bootstrap_ci(values: np.ndarray, n_bootstrap: int = 2000, seed: int = 42):
+def _bootstrap_ci(values: np.ndarray, n_bootstrap: int = 2000, seed: int = 42) -> Tuple[float, float]:
     rng = np.random.default_rng(seed)
     samples = [rng.choice(values, size=len(values), replace=True).mean() for _ in range(n_bootstrap)]
     return float(np.percentile(samples, 2.5)), float(np.percentile(samples, 97.5))
 
 
 def _cohens_d(values: np.ndarray) -> float:
+    """Calculates Cohen's d as an effect size measure."""
     std = np.std(values, ddof=1)
     if std == 0 or np.isnan(std):
         return 0.0

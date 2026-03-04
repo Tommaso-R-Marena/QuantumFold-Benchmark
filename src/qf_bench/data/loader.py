@@ -97,11 +97,19 @@ class BenchmarkDataLoader:
                         )
                         resp = requests.get(url, timeout=10)
                         if resp.status_code == 200:
-                            with open(path, "w") as f:
-                                f.write(resp.text)
-                            logger.info(f"Successfully downloaded PDB {pdb_id}")
-                            success = True
-                            break
+                            # Atomic write using a temporary file
+                            temp_path = path.with_suffix(".tmp")
+                            try:
+                                with open(temp_path, "w") as f:
+                                    f.write(resp.text)
+                                temp_path.replace(path)
+                                logger.info(f"Successfully downloaded PDB {pdb_id}")
+                                success = True
+                                break
+                            except OSError as e:
+                                logger.error(f"Filesystem error during atomic write for {pdb_id}: {e}")
+                                if temp_path.exists():
+                                    temp_path.unlink()
                         elif resp.status_code == 404:
                             logger.warning(f"PDB {pdb_id} not found in RCSB (404).")
                             break
@@ -109,15 +117,19 @@ class BenchmarkDataLoader:
                             logger.warning(
                                 f"Unexpected status {resp.status_code} for {pdb_id}"
                             )
-                    except Exception as e:
-                        logger.error(f"Error downloading PDB {pdb_id} (Attempt {attempt + 1}): {e}")
+                    except requests.exceptions.RequestException as e:
+                        logger.error(f"Network error downloading PDB {pdb_id} (Attempt {attempt + 1}): {e}")
 
                     if attempt < max_retries - 1:
                         time.sleep(2**attempt)  # Exponential backoff
 
                 if not success and not path.exists():
                     logger.info(f"Falling back to dummy PDB for {pdb_id}")
-                    self._create_robust_dummy_pdb(pdb_id, path, sequence)
+                    try:
+                        self._create_robust_dummy_pdb(pdb_id, path, sequence)
+                    except Exception as e:
+                        logger.error(f"Failed to create dummy PDB for {pdb_id}: {e}")
+                        raise
 
         return str(path)
 
