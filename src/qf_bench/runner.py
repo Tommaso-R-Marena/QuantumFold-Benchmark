@@ -93,7 +93,7 @@ class BenchmarkRunner:
                 ground_truth_path = self.data_loader.download_pdb(
                     target_id, sequence=sequence
                 )
-            except Exception as e:
+            except (ValueError, RuntimeError, OSError) as e:
                 return BenchmarkResult(
                     target_id=target_id,
                     dataset=dataset_name,
@@ -118,7 +118,7 @@ class BenchmarkRunner:
                     execution_time=exec_time,
                     **metrics,
                 )
-            except Exception as e:
+            except (ValueError, RuntimeError, OSError) as e:
                 return BenchmarkResult(
                     target_id=target_id,
                     dataset=dataset_name,
@@ -127,6 +127,17 @@ class BenchmarkRunner:
                     tm_score=0.0,
                     plddt=0.0,
                     error=str(e),
+                )
+            except Exception as e:
+                logger.exception(f"Unexpected error during {model.name} prediction: {e}")
+                return BenchmarkResult(
+                    target_id=target_id,
+                    dataset=dataset_name,
+                    model=model.name,
+                    rmsd=float("nan"),
+                    tm_score=0.0,
+                    plddt=0.0,
+                    error=f"Unexpected error: {e}",
                 )
 
         tasks = []
@@ -188,7 +199,7 @@ class BenchmarkRunner:
 
         return df
 
-    def save_results(self, df: pd.DataFrame, filename: str = "benchmark_results.csv"):
+    def save_results(self, df: pd.DataFrame, filename: str = "benchmark_results.csv") -> None:
         """
         Saves the results DataFrame to a CSV file.
 

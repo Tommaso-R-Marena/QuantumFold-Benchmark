@@ -28,7 +28,7 @@ def plot_benchmark_results(df: pd.DataFrame, output_dir: str | Path):
     plt.title("RMSD Comparison across Datasets")
     plt.ylabel("RMSD (Å)")
     plt.xlabel("Dataset")
-    plt.savefig(output_dir / "rmsd_comparison.png")
+    plt.savefig(output_dir / "rmsd_comparison.png", bbox_inches='tight')
     plt.close()
 
     # 2. TM-score Boxplot with Swarm
@@ -40,7 +40,7 @@ def plot_benchmark_results(df: pd.DataFrame, output_dir: str | Path):
     plt.title("TM-score Comparison across Datasets")
     plt.ylabel("TM-score")
     plt.xlabel("Dataset")
-    plt.savefig(output_dir / "tm_score_comparison.png")
+    plt.savefig(output_dir / "tm_score_comparison.png", bbox_inches='tight')
     plt.close()
 
     # 3. GDT-TS Comparison
@@ -50,7 +50,7 @@ def plot_benchmark_results(df: pd.DataFrame, output_dir: str | Path):
         plt.title("GDT-TS Comparison across Datasets")
         plt.ylabel("GDT-TS")
         plt.xlabel("Dataset")
-        plt.savefig(output_dir / "gdt_ts_comparison.png")
+        plt.savefig(output_dir / "gdt_ts_comparison.png", bbox_inches='tight')
         plt.close()
 
     # 4. pLDDT Comparison
@@ -59,7 +59,7 @@ def plot_benchmark_results(df: pd.DataFrame, output_dir: str | Path):
     plt.title("Average pLDDT Confidence by Model (with Std Dev)")
     plt.ylabel("pLDDT")
     plt.xlabel("Dataset")
-    plt.savefig(output_dir / "plddt_comparison.png", dpi=300)
+    plt.savefig(output_dir / "plddt_comparison.png", dpi=300, bbox_inches='tight')
     plt.close()
 
     # 6. Execution Time Comparison
@@ -68,7 +68,7 @@ def plot_benchmark_results(df: pd.DataFrame, output_dir: str | Path):
     plt.title("Average Execution Time by Model")
     plt.ylabel("Time (seconds)")
     plt.xlabel("Dataset")
-    plt.savefig(output_dir / "execution_time_comparison.png", dpi=300)
+    plt.savefig(output_dir / "execution_time_comparison.png", dpi=300, bbox_inches='tight')
     plt.close()
 
     # 5. pLDDT Distribution
@@ -76,7 +76,7 @@ def plot_benchmark_results(df: pd.DataFrame, output_dir: str | Path):
     sns.histplot(data=df, x="plddt", hue="model", kde=True, element="step")
     plt.title("pLDDT Score Distribution")
     plt.xlabel("pLDDT")
-    plt.savefig(output_dir / "plddt_distribution.png")
+    plt.savefig(output_dir / "plddt_distribution.png", bbox_inches='tight')
     plt.close()
 
 
